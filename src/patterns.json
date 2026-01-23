@@ -1,0 +1,185 @@
+{
+  "version": "1.0.0",
+  "description": "AngularJS to Angular 16+ Migration Patterns",
+  "patterns": {
+    "service": {
+      "detection": {
+        "keywords": ["factory", "service", ".service(", ".factory(", "$resource"],
+        "structure": "function returning object or class"
+      },
+      "migration": {
+        "target": "Angular Injectable Service",
+        "rules": [
+          "Convert to @Injectable({ providedIn: 'root' })",
+          "Replace $resource with HttpClient",
+          "Convert callbacks to Observables",
+          "Add TypeScript interfaces for API responses",
+          "Use constructor injection for dependencies"
+        ],
+        "template": {
+          "imports": [
+            "import { Injectable } from '@angular/core';",
+            "import { HttpClient } from '@angular/common/http';",
+            "import { Observable } from 'rxjs';"
+          ],
+          "decorator": "@Injectable({ providedIn: 'root' })",
+          "constructor": "constructor(private http: HttpClient) {}",
+          "methods": "Use HttpClient methods (get, post, put, delete) returning Observable<T>"
+        }
+      }
+    },
+    "controller": {
+      "detection": {
+        "keywords": [".controller(", "$scope", "$rootScope"],
+        "structure": "function with $scope parameter"
+      },
+      "migration": {
+        "target": "Angular Standalone Component",
+        "rules": [
+          "Convert to @Component with standalone: true",
+          "Replace $scope with class properties",
+          "Convert $scope.$watch to signals or computed",
+          "Replace $scope.$apply with zone.js (automatic)",
+          "Move template to component decorator or separate file"
+        ],
+        "template": {
+          "imports": [
+            "import { Component, signal, computed } from '@angular/core';",
+            "import { CommonModule } from '@angular/common';"
+          ],
+          "decorator": "@Component({ selector: 'app-name', standalone: true, imports: [CommonModule], template: '' })",
+          "class": "export class NameComponent"
+        }
+      }
+    },
+    "directive": {
+      "detection": {
+        "keywords": [".directive(", "restrict:", "link:", "compile:"],
+        "structure": "DDO (Directive Definition Object)"
+      },
+      "migration": {
+        "target": "Angular Directive or Component",
+        "rules": [
+          "Attribute directives → @Directive with standalone: true",
+          "Element directives → @Component with standalone: true",
+          "Use @HostListener for DOM events",
+          "Replace link function with ngOnInit/AfterViewInit",
+          "Use Renderer2 for DOM manipulation"
+        ],
+        "template": {
+          "imports": [
+            "import { Directive, HostListener, ElementRef } from '@angular/core';"
+          ],
+          "decorator": "@Directive({ selector: '[appName]', standalone: true })",
+          "constructor": "constructor(private el: ElementRef) {}"
+        }
+      }
+    },
+    "filter": {
+      "detection": {
+        "keywords": [".filter("],
+        "structure": "function returning transformation function"
+      },
+      "migration": {
+        "target": "Angular Pipe",
+        "rules": [
+          "Convert to @Pipe with standalone: true",
+          "Implement PipeTransform interface",
+          "Make pure by default (pure: true)",
+          "Handle null/undefined values"
+        ],
+        "template": {
+          "imports": [
+            "import { Pipe, PipeTransform } from '@angular/core';"
+          ],
+          "decorator": "@Pipe({ name: 'pipeName', standalone: true })",
+          "interface": "implements PipeTransform",
+          "method": "transform(value: any, ...args: any[]): any"
+        }
+      }
+    },
+    "router": {
+      "detection": {
+        "keywords": ["ui-router", "$stateProvider", "$urlRouterProvider", "$state"],
+        "structure": "state configuration"
+      },
+      "migration": {
+        "target": "Angular Router",
+        "rules": [
+          "Replace ui-router with @angular/router",
+          "Convert $stateProvider to Routes array",
+          "Replace ui-view with router-outlet",
+          "Convert resolve to route guards/resolvers",
+          "Use Router.navigate() instead of $state.go()"
+        ],
+        "template": {
+          "imports": [
+            "import { Routes, RouterModule } from '@angular/router';"
+          ],
+          "routes": "const routes: Routes = [{ path: '', component: Component }];",
+          "providers": "provideRouter(routes)"
+        }
+      }
+    },
+    "http": {
+      "detection": {
+        "keywords": ["$http", "$resource", ".query(", ".get(", ".save("],
+        "structure": "HTTP service calls"
+      },
+      "migration": {
+        "target": "HttpClient",
+        "rules": [
+          "Replace $http with HttpClient",
+          "Convert .success()/.error() to .subscribe() or async pipe",
+          "Use RxJS operators (map, catchError, tap)",
+          "Add TypeScript interfaces for responses",
+          "Use HttpHeaders for custom headers"
+        ],
+        "template": {
+          "imports": [
+            "import { HttpClient, HttpHeaders } from '@angular/common/http';",
+            "import { Observable, catchError, map } from 'rxjs';"
+          ],
+          "method": "this.http.get<ResponseType>(url).pipe(catchError(this.handleError))"
+        }
+      }
+    }
+  },
+  "common_replacements": {
+    "$scope": "class properties",
+    "$rootScope": "shared service with signals",
+    "$timeout": "setTimeout or RxJS timer()",
+    "$interval": "setInterval or RxJS interval()",
+    "$q": "RxJS Observable",
+    "$watch": "signals or computed()",
+    "$on": "@HostListener or RxJS Subject",
+    "$broadcast": "RxJS Subject.next()",
+    "$emit": "RxJS Subject.next() or @Output EventEmitter",
+    "ng-repeat": "*ngFor",
+    "ng-if": "*ngIf",
+    "ng-show": "[hidden] or *ngIf",
+    "ng-hide": "[hidden] or *ngIf",
+    "ng-class": "[class] or [ngClass]",
+    "ng-click": "(click)",
+    "ng-model": "[(ngModel)]"
+  },
+  "validation_rules": {
+    "typescript": {
+      "strict": true,
+      "noImplicitAny": true,
+      "strictNullChecks": true
+    },
+    "angular": {
+      "standalone_components": true,
+      "min_version": "16.0.0",
+      "use_signals": true,
+      "use_inject_function": true
+    },
+    "code_quality": {
+      "add_jsdoc": true,
+      "error_handling": true,
+      "proper_typing": true,
+      "rxjs_best_practices": true
+    }
+  }
+}
