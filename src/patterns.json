@@ -38,16 +38,17 @@
         "rules": [
           "Convert to @Component with standalone: true",
           "Replace $scope with class properties",
-          "Convert $scope.$watch to signals or computed",
+          "Convert $scope.$watch to RxJS Observables or getters/setters",
           "Replace $scope.$apply with zone.js (automatic)",
-          "Move template to component decorator or separate file"
+          "Move template to component decorator or separate file",
+          "Use OnPush change detection strategy for performance"
         ],
         "template": {
           "imports": [
-            "import { Component, signal, computed } from '@angular/core';",
+            "import { Component, ChangeDetectionStrategy } from '@angular/core';",
             "import { CommonModule } from '@angular/common';"
           ],
-          "decorator": "@Component({ selector: 'app-name', standalone: true, imports: [CommonModule], template: '' })",
+          "decorator": "@Component({ selector: 'app-name', standalone: true, imports: [CommonModule], templateUrl: './name.component.html', changeDetection: ChangeDetectionStrategy.OnPush })",
           "class": "export class NameComponent"
         }
       }
@@ -68,10 +69,10 @@
         ],
         "template": {
           "imports": [
-            "import { Directive, HostListener, ElementRef } from '@angular/core';"
+            "import { Directive, HostListener, ElementRef, Renderer2 } from '@angular/core';"
           ],
           "decorator": "@Directive({ selector: '[appName]', standalone: true })",
-          "constructor": "constructor(private el: ElementRef) {}"
+          "constructor": "constructor(private el: ElementRef, private renderer: Renderer2) {}"
         }
       }
     },
@@ -143,15 +144,190 @@
           "method": "this.http.get<ResponseType>(url).pipe(catchError(this.handleError))"
         }
       }
+    },
+    "template": {
+      "detection": {
+        "keywords": ["ng-repeat", "ng-if", "ng-model", "ng-click", "ng-show", "ng-hide"],
+        "structure": "HTML with AngularJS directives"
+      },
+      "migration": {
+        "target": "Angular 16 Template (component.html)",
+        "rules": [
+          "Convert ng-repeat to *ngFor with trackBy",
+          "Convert ng-if/ng-show/ng-hide to *ngIf or [hidden]",
+          "Convert ng-model to [(ngModel)] or reactive forms",
+          "Convert ng-click to (click) event binding",
+          "Convert ng-class to [ngClass] or [class.name]",
+          "Convert ng-style to [ngStyle] or [style.property]",
+          "Convert {{ }} interpolation to Angular interpolation (same syntax)",
+          "Convert filters (|) to Angular pipes",
+          "Replace ng-src with [src], ng-href with [href]",
+          "Convert ng-disabled to [disabled], ng-readonly to [readonly]",
+          "Replace ng-bind with {{ }} interpolation",
+          "Convert ng-submit to (ngSubmit) with reactive forms",
+          "Use async pipe for observables in templates",
+          "Add trackBy functions for *ngFor performance"
+        ],
+        "template": {
+          "structural_directives": {
+            "ng-repeat": "*ngFor=\"let item of items; trackBy: trackByFn\"",
+            "ng-if": "*ngIf=\"condition\"",
+            "ng-show": "*ngIf=\"condition\" or [hidden]=\"!condition\"",
+            "ng-hide": "*ngIf=\"!condition\" or [hidden]=\"condition\"",
+            "ng-switch": "[ngSwitch]=\"value\" with *ngSwitchCase"
+          },
+          "attribute_directives": {
+            "ng-class": "[ngClass]=\"{ 'class-name': condition }\" or [class.class-name]=\"condition\"",
+            "ng-style": "[ngStyle]=\"{ 'property': value }\" or [style.property]=\"value\"",
+            "ng-disabled": "[disabled]=\"condition\"",
+            "ng-readonly": "[readonly]=\"condition\"",
+            "ng-checked": "[checked]=\"condition\"",
+            "ng-selected": "[selected]=\"condition\""
+          },
+          "event_bindings": {
+            "ng-click": "(click)=\"handler($event)\"",
+            "ng-dblclick": "(dblclick)=\"handler($event)\"",
+            "ng-mousedown": "(mousedown)=\"handler($event)\"",
+            "ng-mouseup": "(mouseup)=\"handler($event)\"",
+            "ng-mouseenter": "(mouseenter)=\"handler($event)\"",
+            "ng-mouseleave": "(mouseleave)=\"handler($event)\"",
+            "ng-keydown": "(keydown)=\"handler($event)\"",
+            "ng-keyup": "(keyup)=\"handler($event)\"",
+            "ng-change": "(change)=\"handler($event)\" or (ngModelChange)=\"handler($event)\"",
+            "ng-submit": "(ngSubmit)=\"onSubmit()\""
+          },
+          "property_bindings": {
+            "ng-src": "[src]=\"imageUrl\"",
+            "ng-href": "[href]=\"linkUrl\"",
+            "ng-value": "[value]=\"itemValue\"",
+            "ng-bind": "{{ expression }}",
+            "ng-bind-html": "[innerHTML]=\"htmlContent\" (use DomSanitizer)"
+          },
+          "two_way_binding": {
+            "ng-model": "[(ngModel)]=\"property\" (template-driven) or [formControl]=\"control\" (reactive)"
+          }
+        }
+      }
+    },
+    "template_with_reactive_forms": {
+      "detection": {
+        "keywords": ["ng-model", "ng-form", "ng-required", "ng-pattern", "form"],
+        "structure": "HTML forms with validation"
+      },
+      "migration": {
+        "target": "Angular 16 Reactive Forms",
+        "rules": [
+          "Replace ng-model with [formControl] or formControlName",
+          "Create FormGroup with FormBuilder in component",
+          "Use ReactiveFormsModule instead of FormsModule",
+          "Convert ng-required to Validators.required",
+          "Convert ng-pattern to Validators.pattern",
+          "Convert ng-minlength/maxlength to Validators.minLength/maxLength",
+          "Use formGroup directive on form element",
+          "Access form state with formGroup.valid, formGroup.errors",
+          "Use (ngSubmit) for form submission",
+          "Show validation errors with form.get('field')?.errors",
+          "Use typed FormControls with strict typing",
+          "Implement custom validators for complex validation"
+        ],
+        "template": {
+          "imports": [
+            "import { FormBuilder, FormGroup, FormControl, Validators, ReactiveFormsModule } from '@angular/forms';"
+          ],
+          "component": {
+            "form_declaration": "myForm: FormGroup;",
+            "constructor": "constructor(private fb: FormBuilder) {}",
+            "form_init": "this.myForm = this.fb.group({ field: ['', [Validators.required, Validators.email]] });",
+            "submit": "onSubmit() { if (this.myForm.valid) { console.log(this.myForm.value); } }"
+          },
+          "template_syntax": {
+            "form_element": "<form [formGroup]=\"myForm\" (ngSubmit)=\"onSubmit()\">",
+            "input_field": "<input formControlName=\"field\" />",
+            "validation_error": "<div *ngIf=\"myForm.get('field')?.errors?.['required']\">Required</div>",
+            "submit_button": "<button type=\"submit\" [disabled]=\"myForm.invalid\">Submit</button>"
+          }
+        }
+      }
+    },
+    "template_with_structural_directives": {
+      "detection": {
+        "keywords": ["ng-repeat", "ng-if", "ng-switch"],
+        "structure": "Templates with loops and conditionals"
+      },
+      "migration": {
+        "target": "Angular 16 Structural Directives",
+        "rules": [
+          "Convert ng-repeat to *ngFor with proper syntax",
+          "Add trackBy function for performance optimization",
+          "Use index, first, last, even, odd variables in *ngFor",
+          "Convert ng-if to *ngIf with else blocks",
+          "Use ng-template for else conditions",
+          "Convert ng-switch to [ngSwitch] with *ngSwitchCase",
+          "Use async pipe with observables in *ngFor and *ngIf",
+          "Avoid nested *ngFor without trackBy",
+          "Use ng-container to avoid extra DOM elements"
+        ],
+        "template": {
+          "ngFor_examples": {
+            "basic": "*ngFor=\"let item of items\"",
+            "with_index": "*ngFor=\"let item of items; let i = index\"",
+            "with_trackBy": "*ngFor=\"let item of items; trackBy: trackById\"",
+            "with_variables": "*ngFor=\"let item of items; let first = first; let last = last\"",
+            "with_observable": "*ngFor=\"let item of items$ | async\""
+          },
+          "ngIf_examples": {
+            "basic": "*ngIf=\"condition\"",
+            "with_else": "*ngIf=\"condition; else elseBlock\"",
+            "with_then_else": "*ngIf=\"condition; then thenBlock else elseBlock\"",
+            "with_as": "*ngIf=\"observable$ | async as data\"",
+            "with_observable": "*ngIf=\"data$ | async as data\""
+          },
+          "ngSwitch_examples": {
+            "basic": "[ngSwitch]=\"value\"",
+            "case": "*ngSwitchCase=\"'option1'\"",
+            "default": "*ngSwitchDefault"
+          },
+          "ng_container": "<ng-container *ngIf=\"condition\"><ng-container *ngFor=\"let item of items\">..."
+        }
+      }
+    },
+    "template_basic": {
+      "detection": {
+        "keywords": ["{{", "}}", "ng-bind", "ng-class", "ng-style"],
+        "structure": "Simple templates with interpolation"
+      },
+      "migration": {
+        "target": "Angular 16 Basic Template",
+        "rules": [
+          "Keep {{ }} interpolation syntax (same as AngularJS)",
+          "Convert ng-bind to {{ }} interpolation",
+          "Convert ng-class to [ngClass] or [class.name]",
+          "Convert ng-style to [ngStyle] or [style.property]",
+          "Convert ng-src to [src], ng-href to [href]",
+          "Use property binding [property] for dynamic values",
+          "Use event binding (event) for DOM events",
+          "Import CommonModule for built-in directives",
+          "Use standalone: true in component decorator",
+          "Add proper typing for template variables"
+        ],
+        "template": {
+          "interpolation": "{{ expression }}",
+          "property_binding": "[property]=\"value\"",
+          "event_binding": "(event)=\"handler()\"",
+          "two_way_binding": "[(ngModel)]=\"property\"",
+          "class_binding": "[class.active]=\"isActive\"",
+          "style_binding": "[style.color]=\"textColor\""
+        }
+      }
     }
   },
   "common_replacements": {
     "$scope": "class properties",
-    "$rootScope": "shared service with signals",
+    "$rootScope": "shared service with BehaviorSubject",
     "$timeout": "setTimeout or RxJS timer()",
     "$interval": "setInterval or RxJS interval()",
     "$q": "RxJS Observable",
-    "$watch": "signals or computed()",
+    "$watch": "RxJS Observables or getters/setters",
     "$on": "@HostListener or RxJS Subject",
     "$broadcast": "RxJS Subject.next()",
     "$emit": "RxJS Subject.next() or @Output EventEmitter",
@@ -160,8 +336,160 @@
     "ng-show": "[hidden] or *ngIf",
     "ng-hide": "[hidden] or *ngIf",
     "ng-class": "[class] or [ngClass]",
+    "ng-style": "[style] or [ngStyle]",
     "ng-click": "(click)",
-    "ng-model": "[(ngModel)]"
+    "ng-model": "[(ngModel)] or [formControl]",
+    "ng-submit": "(ngSubmit)",
+    "ng-src": "[src]",
+    "ng-href": "[href]",
+    "ng-disabled": "[disabled]",
+    "ng-readonly": "[readonly]",
+    "ng-checked": "[checked]",
+    "ng-selected": "[selected]",
+    "ng-bind": "{{ }}",
+    "ng-bind-html": "[innerHTML]"
+  },
+  "template_directive_mappings": {
+    "structural": {
+      "ng-repeat": {
+        "angular": "*ngFor",
+        "syntax": "*ngFor=\"let item of items; trackBy: trackByFn\"",
+        "notes": "Always add trackBy for performance"
+      },
+      "ng-if": {
+        "angular": "*ngIf",
+        "syntax": "*ngIf=\"condition\"",
+        "notes": "Can use else: *ngIf=\"condition; else elseBlock\""
+      },
+      "ng-show": {
+        "angular": "*ngIf or [hidden]",
+        "syntax": "*ngIf=\"condition\" or [hidden]=\"!condition\"",
+        "notes": "Use *ngIf to remove from DOM, [hidden] to hide with CSS"
+      },
+      "ng-hide": {
+        "angular": "*ngIf or [hidden]",
+        "syntax": "*ngIf=\"!condition\" or [hidden]=\"condition\"",
+        "notes": "Use *ngIf to remove from DOM, [hidden] to hide with CSS"
+      },
+      "ng-switch": {
+        "angular": "[ngSwitch]",
+        "syntax": "[ngSwitch]=\"value\" with *ngSwitchCase=\"'case'\"",
+        "notes": "Use *ngSwitchDefault for default case"
+      },
+      "ng-include": {
+        "angular": "ng-container with ngTemplateOutlet",
+        "syntax": "<ng-container *ngTemplateOutlet=\"templateRef\"></ng-container>",
+        "notes": "Or create separate component"
+      }
+    },
+    "attribute": {
+      "ng-class": {
+        "angular": "[ngClass] or [class.name]",
+        "syntax": "[ngClass]=\"{ 'active': isActive }\" or [class.active]=\"isActive\"",
+        "notes": "Use [class.name] for single class, [ngClass] for multiple"
+      },
+      "ng-style": {
+        "angular": "[ngStyle] or [style.property]",
+        "syntax": "[ngStyle]=\"{ 'color': textColor }\" or [style.color]=\"textColor\"",
+        "notes": "Use [style.property] for single style, [ngStyle] for multiple"
+      },
+      "ng-disabled": {
+        "angular": "[disabled]",
+        "syntax": "[disabled]=\"isDisabled\"",
+        "notes": "Direct property binding"
+      },
+      "ng-readonly": {
+        "angular": "[readonly]",
+        "syntax": "[readonly]=\"isReadonly\"",
+        "notes": "Direct property binding"
+      },
+      "ng-required": {
+        "angular": "Validators.required in reactive forms",
+        "syntax": "[required]=\"isRequired\" or use FormControl validators",
+        "notes": "Prefer reactive forms validation"
+      }
+    },
+    "events": {
+      "ng-click": {
+        "angular": "(click)",
+        "syntax": "(click)=\"handleClick($event)\"",
+        "notes": "All event names without 'ng-' prefix"
+      },
+      "ng-change": {
+        "angular": "(change) or (ngModelChange)",
+        "syntax": "(change)=\"handleChange($event)\" or (ngModelChange)=\"onValueChange($event)\"",
+        "notes": "Use (ngModelChange) with [(ngModel)]"
+      },
+      "ng-submit": {
+        "angular": "(ngSubmit)",
+        "syntax": "<form (ngSubmit)=\"onSubmit()\">",
+        "notes": "Use with reactive or template-driven forms"
+      },
+      "ng-blur": {
+        "angular": "(blur)",
+        "syntax": "(blur)=\"handleBlur($event)\"",
+        "notes": "Direct event binding"
+      },
+      "ng-focus": {
+        "angular": "(focus)",
+        "syntax": "(focus)=\"handleFocus($event)\"",
+        "notes": "Direct event binding"
+      }
+    },
+    "forms": {
+      "ng-model": {
+        "angular": "[(ngModel)] or [formControl]",
+        "syntax": "[(ngModel)]=\"value\" or [formControl]=\"control\"",
+        "notes": "Prefer reactive forms with FormControl"
+      },
+      "ng-form": {
+        "angular": "[formGroup]",
+        "syntax": "<form [formGroup]=\"myForm\">",
+        "notes": "Use ReactiveFormsModule"
+      },
+      "ng-pattern": {
+        "angular": "Validators.pattern",
+        "syntax": "FormControl('', [Validators.pattern(/regex/)])",
+        "notes": "Use in reactive forms validation"
+      },
+      "ng-minlength": {
+        "angular": "Validators.minLength",
+        "syntax": "FormControl('', [Validators.minLength(5)])",
+        "notes": "Use in reactive forms validation"
+      },
+      "ng-maxlength": {
+        "angular": "Validators.maxLength",
+        "syntax": "FormControl('', [Validators.maxLength(10)])",
+        "notes": "Use in reactive forms validation"
+      }
+    },
+    "special": {
+      "ng-src": {
+        "angular": "[src]",
+        "syntax": "[src]=\"imageUrl\"",
+        "notes": "Property binding for dynamic sources"
+      },
+      "ng-href": {
+        "angular": "[href]",
+        "syntax": "[href]=\"linkUrl\"",
+        "notes": "Property binding for dynamic links"
+      },
+      "ng-bind": {
+        "angular": "{{ }}",
+        "syntax": "{{ expression }}",
+        "notes": "Use interpolation instead"
+      },
+      "ng-bind-html": {
+        "angular": "[innerHTML]",
+        "syntax": "[innerHTML]=\"htmlContent\"",
+        "notes": "Use DomSanitizer.bypassSecurityTrustHtml() for safety"
+      },
+      "ng-transclude": {
+        "angular": "ng-content",
+        "syntax": "<ng-content></ng-content>",
+        "notes": "Use for content projection in components"
+      }
+    }
   },
   "validation_rules": {
     "typescript": {
@@ -172,14 +500,20 @@
     "angular": {
       "standalone_components": true,
       "min_version": "16.0.0",
-      "use_signals": true,
-      "use_inject_function": true
+      "use_inject_function": false
     },
     "code_quality": {
       "add_jsdoc": true,
       "error_handling": true,
       "proper_typing": true,
       "rxjs_best_practices": true
+    },
+    "template_quality": {
+      "use_trackBy": true,
+      "use_async_pipe": true,
+      "avoid_complex_expressions": true,
+      "use_ng_container": true,
+      "accessibility": true
     }
   }
 }

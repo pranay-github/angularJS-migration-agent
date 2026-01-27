@@ -19,13 +19,17 @@ class FileClassifier:
         """
         self.llm = llm
     
-    def classify(self, code: str) -> Dict[str, any]:
+    def classify(self, code: str, file_extension: str = '.js') -> Dict[str, any]:
         """
         Classify AngularJS code using LLM
         
+        Args:
+            code: Source code content
+            file_extension: File extension (.js, .html, .ts, etc.)
+        
         Returns:
             {
-                'primary_type': 'service' | 'controller' | 'directive' | 'filter' | 'router' | 'module',
+                'primary_type': 'service' | 'controller' | 'directive' | 'filter' | 'router' | 'module' | 'template',
                 'detected_types': ['service', 'controller'],
                 'confidence': 0.95,
                 'features': {
@@ -38,6 +42,10 @@ class FileClassifier:
         """
         if not self.llm:
             raise RuntimeError("LLM not initialized. Pass llm instance to FileClassifier constructor.")
+        
+        # Quick check for HTML templates
+        if file_extension.lower() in ['.html', '.htm']:
+            return self._classify_template(code)
         
         # Build classification prompt
         prompt = self._build_classification_prompt(code)
@@ -99,6 +107,113 @@ Return ONLY the JSON, no other text.""")
         except json.JSONDecodeError as e:
             print(f"⚠️  LLM classification failed, using fallback: {e}")
             return self._fallback_classify(code)
+    
+    def _classify_template(self, html_code: str) -> Dict:
+        """
+        Classify AngularJS HTML template using LLM
+        
+        Detects template-specific features like ng-* directives
+        """
+        if not self.llm:
+            return self._fallback_classify_template(html_code)
+        
+        from langchain_core.messages import HumanMessage, SystemMessage
+        
+        # Truncate if too long
+        code_sample = html_code[:3000] + ("..." if len(html_code) > 3000 else "")
+        
+        prompt = f"""Classify this AngularJS HTML template and identify its features.
+
+TEMPLATE CODE:
+{code_sample}
+
+FEATURES TO DETECT:
+- has_ng_repeat: Uses ng-repeat directive
+- has_ng_if: Uses ng-if, ng-show, ng-hide
+- has_ng_model: Uses ng-model (two-way binding)
+- has_ng_click: Uses ng-click or other event directives
+- has_ng_class: Uses ng-class or ng-style
+- has_filters: Uses Angular filters (| syntax)
+- has_ng_include: Uses ng-include
+- has_custom_directives: Uses custom directives
+- has_forms: Contains forms with ng-form or form element
+- has_validation: Has form validation (ng-required, ng-pattern, etc.)
+- has_ui_router: Uses ui-view or ui-sref
+- has_transclusion: Uses ng-transclude
+- uses_controller_as: Uses "ctrl." or "vm." syntax
+
+COMPLEXITY:
+- low: < 50 lines, simple directives
+- medium: 50-200 lines, moderate interactivity
+- high: > 200 lines, complex forms/logic
+
+Return ONLY a JSON object with this structure:
+{{
+  "primary_type": "template",
+  "detected_types": ["template"],
+  "confidence": 0.95,
+  "features": {{
+    "has_ng_repeat": true,
+    "has_ng_if": false,
+    ...
+  }},
+  "complexity": "low|medium|high",
+  "reasoning": "Brief explanation"
+}}"""
+
+        system_msg = SystemMessage(content="You are an AngularJS template expert. Analyze HTML templates and return JSON classification.")
+        
+        try:
+            response = self.llm.invoke([system_msg, HumanMessage(content=prompt)])
+            content = response.content.strip()
+            
+            # Clean response
+            if '```json' in content:
+                content = content.split('```json')[1].split('```')[0].strip()
+            elif '```' in content:
+                content = content.split('```')[1].split('```')[0].strip()
+            
+            result = json.loads(content)
+            result['primary_type'] = 'template'
+            
+            return result
+            
+        except Exception as e:
+            print(f"⚠️  Template classification failed, using fallback: {e}")
+            return self._fallback_classify_template(html_code)
+    
+    def _fallback_classify_template(self, html_code: str) -> Dict:
+        """Fallback template classification using regex patterns"""
+        import re
+        
+        lines = len(html_code.split('\n'))
+        complexity = 'low' if lines < 50 else 'medium' if lines < 200 else 'high'
+        
+        # Detect template features
+        features = {
+            'has_ng_repeat': bool(re.search(r'ng-repeat\s*=', html_code)),
+            'has_ng_if': bool(re.search(r'ng-(if|show|hide|switch)\s*=', html_code)),
+            'has_ng_model': bool(re.search(r'ng-model\s*=', html_code)),
+            'has_ng_click': bool(re.search(r'ng-(click|dblclick|mousedown|mouseup)\s*=', html_code)),
+            'has_ng_class': bool(re.search(r'ng-(class|style)\s*=', html_code)),
+            'has_filters': bool(re.search(r'\|\s*\w+', html_code)),
+            'has_ng_include': bool(re.search(r'ng-include\s*=', html_code)),
+            'has_custom_directives': bool(re.search(r'<[\w-]+(?!.*(?:div|span|p|a|button|input|form|table|tr|td|th|ul|li|nav|header|footer|section|article))\s', html_code)),
+            'has_forms': bool(re.search(r'<form|ng-form', html_code)),
+            'has_validation': bool(re.search(r'ng-(required|pattern|minlength|maxlength|min|max)\s*=', html_code)),
+            'has_ui_router': bool(re.search(r'ui-(view|sref)', html_code)),
+            'has_transclusion': bool(re.search(r'ng-transclude', html_code)),
+            'uses_controller_as': bool(re.search(r'(ctrl|vm|controller)\.\w+', html_code)),
+        }
+        
+        return {
+            'primary_type': 'template',
+            'detected_types': ['template'],
+            'confidence': 0.8,
+            'features': features,
+            'complexity': complexity,
+            'reasoning': 'Fallback template classification (pattern-based)'
+        }
     
     def _build_classification_prompt(self, code: str) -> str:
         """Build classification prompt for LLM"""
@@ -184,7 +299,16 @@ Analyze and return the JSON classification."""
         primary_type = classification['primary_type']
         features = classification['features']
         
-        if primary_type == 'service':
+        if primary_type == 'template':
+            # New: Template-specific strategies
+            if features.get('has_forms') and features.get('has_validation'):
+                return 'template_with_reactive_forms'
+            elif features.get('has_ng_repeat') or features.get('has_ng_if'):
+                return 'template_with_structural_directives'
+            else:
+                return 'template_basic'
+        
+        elif primary_type == 'service':
             if features.get('uses_resource'):
                 return 'service_with_httpclient'
             elif features.get('uses_http'):
