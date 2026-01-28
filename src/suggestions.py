@@ -122,13 +122,13 @@ def generate_suggestions_report(engine,
     suggestions.append("└" + "─" * 78 + "┘")
     suggestions.append("")
     suggestions.append(f"Total Files Processed:  {total_files}")
-    suggestions.append(f"Successful Migrations:  {successful} ✅")
-    suggestions.append(f"Failed Migrations:      {failed} ❌")
+    suggestions.append(f"Successful Migrations:  {successful} ")
+    suggestions.append(f"Failed Migrations:      {failed} ")
     suggestions.append(f"Success Rate:           {(successful/total_files*100):.1f}%" if total_files else "Success Rate: N/A")
     suggestions.append("")
 
     # File types
-    suggestions.append("📋 FILE TYPE BREAKDOWN:")
+    suggestions.append(" FILE TYPE BREAKDOWN:")
     for file_type, files in categorized.items():
         if files:
             suggestions.append(f"   {file_type.capitalize()}: {len(files)}")
@@ -138,7 +138,7 @@ def generate_suggestions_report(engine,
     if dependency_map:
         deps_found = sum(1 for deps in dependency_map.values() if deps)
         if deps_found > 0:
-            suggestions.append("📦 DEPENDENCY ANALYSIS:")
+            suggestions.append(" DEPENDENCY ANALYSIS:")
             suggestions.append(f"   Files with dependencies: {deps_found}")
             for file, deps in dependency_map.items():
                 if deps:
@@ -149,7 +149,7 @@ def generate_suggestions_report(engine,
 
     # Component-template pairs
     if pairs_map:
-        suggestions.append("🔗 COMPONENT-TEMPLATE PAIRS:")
+        suggestions.append(" COMPONENT-TEMPLATE PAIRS:")
         suggestions.append(f"   Detected pairs: {len(pairs_map)}")
         for ctrl, tmpl in pairs_map.items():
             suggestions.append(f"   • {Path(ctrl).name} → {Path(tmpl).name}")

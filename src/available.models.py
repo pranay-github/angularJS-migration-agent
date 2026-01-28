@@ -28,8 +28,8 @@ def get_available_models(api_token):
 # Get Copilot token and fetch models
 token = get_copilot_token_via_internal_endpoint()
 if token:
-    print("🔑 Token acquired!")
-    print("\n📋 Fetching available models...\n")
+    print(" Token acquired!")
+    print("\n Fetching available models...\n")
     models = get_available_models(token)
     if models:
         print("Available models:")
@@ -39,4 +39,4 @@ if token:
         else:
             print(models)
 else:
-    print("❌ Failed to get Copilot token")
+    print(" Failed to get Copilot token")

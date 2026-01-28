@@ -105,7 +105,7 @@ Return ONLY the JSON, no other text.""")
             return result
             
         except json.JSONDecodeError as e:
-            print(f"⚠️  LLM classification failed, using fallback: {e}")
+            print(f"  LLM classification failed, using fallback: {e}")
             return self._fallback_classify(code)
     
     def _classify_template(self, html_code: str) -> Dict:
@@ -179,7 +179,7 @@ Return ONLY a JSON object with this structure:
             return result
             
         except Exception as e:
-            print(f"⚠️  Template classification failed, using fallback: {e}")
+            print(f"  Template classification failed, using fallback: {e}")
             return self._fallback_classify_template(html_code)
     
     def _fallback_classify_template(self, html_code: str) -> Dict:

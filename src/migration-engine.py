@@ -31,18 +31,18 @@ class MigrationEngine:
     """Main migration engine coordinating all components"""
     
     def __init__(self, model: str = DEFAULT_MODEL):
-        print("🚀 Initializing Migration Engine")
+        print(" Initializing Migration Engine")
         print("=" * 70)
         
         self.registry = PatternRegistry()
         self.validator = CodeValidator()
         
-        print("🔑 Acquiring GitHub Copilot token...")
+        print(" Acquiring GitHub Copilot token...")
         token = get_copilot_token_via_internal_endpoint()
         if not token:
             raise RuntimeError("Failed to get Copilot token. Set GITHUB_TOKEN.")
         
-        print(f"🤖 Initializing {model}...")
+        print(f" Initializing {model}...")
         self.llm = ChatCopilot(token=token, model=model)
         self.classifier = FileClassifier(llm=self.llm)
 
@@ -54,7 +54,7 @@ class MigrationEngine:
         self.migration_map = {}  # old_path -> new_path
         self.dependency_graph = {}  # file -> list of dependencies
         
-        print("✅ Engine Ready")
+        print(" Engine Ready")
         print("=" * 70)
         print()
 
@@ -90,7 +90,7 @@ class MigrationEngine:
         # Handle circular dependencies or remaining files
         remaining = [f for f in files if f not in sorted_files]
         if remaining:
-            print(f"   ⚠️  {len(remaining)} file(s) have circular dependencies, adding at end")
+            print(f"     {len(remaining)} file(s) have circular dependencies, adding at end")
             sorted_files.extend(remaining)
         
         return sorted_files
@@ -132,27 +132,25 @@ class MigrationEngine:
         
         output_path.mkdir(parents=True, exist_ok=True)
         
-        print("┌─────────────────────────────────────────────────────────────────┐")
-        print("│           BATCH MIGRATION - DIRECTORY PROCESSING                │")
-        print("└─────────────────────────────────────────────────────────────────┘")
+        print("BATCH MIGRATION - DIRECTORY PROCESSING")
         print()
-        print(f"📁 Input Directory:  {input_path}")
-        print(f"📁 Output Directory: {output_path}")
-        print(f"📄 File Extensions:  {', '.join(file_extensions)}")
-        print(f"🔗 Template Pairing: {'Enabled (LLM-based)' if pair_templates else 'Disabled'}")
-        print(f"🔍 Dependency Analysis: {'Enabled (LLM-based)' if analyze_dependencies else 'Disabled'}")
-        print(f"🔄 Import Fixing: {'Enabled' if fix_imports else 'Disabled'}")
+        print(f" Input Directory:  {input_path}")
+        print(f" Output Directory: {output_path}")
+        print(f" File Extensions:  {', '.join(file_extensions)}")
+        print(f" Template Pairing: {'Enabled (LLM-based)' if pair_templates else 'Disabled'}")
+        print(f" Dependency Analysis: {'Enabled (LLM-based)' if analyze_dependencies else 'Disabled'}")
+        print(f" Import Fixing: {'Enabled' if fix_imports else 'Disabled'}")
         print()
         
         # Scan for files
-        print("🔍 Scanning for files...")
+        print(" Scanning for files...")
         files_to_migrate = []
         for ext in file_extensions:
             found_files = list(input_path.rglob(f"*{ext}"))
             files_to_migrate.extend(found_files)
         
         if not files_to_migrate:
-            print("❌ No files found to migrate!")
+            print(" No files found to migrate!")
             return {
                 'total_files': 0,
                 'successful': 0,
@@ -164,7 +162,7 @@ class MigrationEngine:
         print()
         
         # Categorize files by type for optimal processing order
-        print("📋 Categorizing files...")
+        print(" Categorizing files...")
         categorized = self._categorize_files(files_to_migrate)
         
         print(f"   Services:    {len(categorized['services'])}")
@@ -176,7 +174,7 @@ class MigrationEngine:
         print()
         
         # Analyze dependencies for code files using LLM
-        print("🔍 Analyzing dependencies...")
+        print(" Analyzing dependencies...")
         all_code_files = (categorized['services'] + categorized['controllers'] + 
                         categorized['directives'] + categorized['filters'] + 
                         categorized['other'])
@@ -191,7 +189,7 @@ class MigrationEngine:
             # Show dependency information
             deps_found = sum(1 for deps in dependency_map.values() if deps)
             if deps_found > 0:
-                print(f"   ✅ Found {deps_found} file(s) with dependencies")
+                print(f"    Found {deps_found} file(s) with dependencies")
                 for file, deps in dependency_map.items():
                     if deps:
                         print(f"      {file.name} depends on:")
@@ -200,9 +198,9 @@ class MigrationEngine:
                 
                 # Sort by dependency order
                 sorted_code_files = self._topological_sort(all_code_files, dependency_map)
-                print(f"   🔄 Established migration order ({len(sorted_code_files)} files)")
+                print(f"    Established migration order ({len(sorted_code_files)} files)")
             else:
-                print(f"   ℹ️  No dependencies detected between files")
+                print(f"     No dependencies detected between files")
             print()
 
         # Store for later use
@@ -211,7 +209,7 @@ class MigrationEngine:
         # Detect component-template pairs using LLM
         pairs_map = {}
         if pair_templates and categorized['controllers'] and categorized['templates']:
-            print("🔗 Using LLM to detect component-template pairs...")
+            print(" Using LLM to detect component-template pairs...")
             pairs_map = self._detect_pairs_with_llm(
                 categorized['controllers'],
                 categorized['templates']
@@ -240,7 +238,7 @@ class MigrationEngine:
         failed = 0
         
         print("=" * 70)
-        print("🚀 STARTING BATCH MIGRATION")
+        print(" STARTING BATCH MIGRATION")
         print("=" * 70)
         print()
         
@@ -255,7 +253,7 @@ class MigrationEngine:
             if not files:
                 continue
             
-            print(f"📦 Processing {category.upper()}...")
+            print(f" Processing {category.upper()}...")
             print("-" * 70)
             
             for i, file_path in enumerate(files, 1):
@@ -311,7 +309,7 @@ class MigrationEngine:
                         'result': result
                     })
                     successful += 1
-                    print("✅ Success")
+                    print(" Success")
                     
                 except Exception as e:
                     results.append({
@@ -320,34 +318,34 @@ class MigrationEngine:
                         'error': str(e)
                     })
                     failed += 1
-                    print(f"❌ Failed: {e}")
+                    print(f" Failed: {e}")
             
             print()
         
         # Final summary
         print()
         print("=" * 70)
-        print("📊 BATCH MIGRATION SUMMARY")
+        print(" BATCH MIGRATION SUMMARY")
         print("=" * 70)
         print(f"Total Files:     {len(files_to_migrate)}")
-        print(f"Successful:      {successful} ✅")
-        print(f"Failed:          {failed} ❌")
+        print(f"Successful:      {successful} ")
+        print(f"Failed:          {failed} ")
         print(f"Success Rate:    {(successful/len(files_to_migrate)*100):.1f}%")
         print(f"Output Location: {output_path}")
         
         if pair_templates and self.component_template_map:
-            print(f"\n🔗 Component-Template Pairs: {len(self.component_template_map)}")
+            print(f"\n Component-Template Pairs: {len(self.component_template_map)}")
             for comp, tmpl in self.component_template_map.items():
                 print(f"   • {Path(comp).name} → {Path(tmpl).name}")
         
         if analyze_dependencies and self.dependency_graph:
             deps_count = sum(1 for deps in self.dependency_graph.values() if deps)
             if deps_count > 0:
-                print(f"\n📦 Dependencies Tracked: {deps_count} file(s)")
+                print(f"\n Dependencies Tracked: {deps_count} file(s)")
         
         # Generate LLM-powered insights
         print()
-        print("🤖 Generating AI-powered migration analysis...")
+        print(" Generating AI-powered migration analysis...")
         llm_insights = self._generate_llm_insights(
             categorized=categorized,
             dependency_map=dependency_map,
@@ -357,7 +355,7 @@ class MigrationEngine:
         
         # Generate suggestions report (including LLM insights)
         print()
-        print("📝 Generating comprehensive suggestions report...")
+        print(" Generating comprehensive suggestions report...")
         suggestions_content = generate_suggestions_report(
             self,
             categorized,
@@ -370,7 +368,7 @@ class MigrationEngine:
         
         suggestions_file = output_path / "suggestions.txt"
         suggestions_file.write_text(suggestions_content, encoding='utf-8')
-        print(f"   ✅ Saved: {suggestions_file}")
+        print(f"    Saved: {suggestions_file}")
         
         return {
             'total_files': len(files_to_migrate),
@@ -401,7 +399,7 @@ class MigrationEngine:
         if not controllers or not templates:
             return {}
         
-        print("   🤖 Analyzing controllers and templates with AI...")
+        print("    Analyzing controllers and templates with AI...")
         
         # Prepare data for LLM
         controllers_info = []
@@ -416,7 +414,7 @@ class MigrationEngine:
                     'content_preview': content_preview
                 })
             except Exception as e:
-                print(f"   ⚠️  Could not read {ctrl.name}: {e}")
+                print(f"     Could not read {ctrl.name}: {e}")
         
         templates_info = []
         for tmpl in templates:
@@ -429,7 +427,7 @@ class MigrationEngine:
                     'content_preview': content_preview
                 })
             except Exception as e:
-                print(f"   ⚠️  Could not read {tmpl.name}: {e}")
+                print(f"     Could not read {tmpl.name}: {e}")
         
         # Build LLM prompt
         prompt = pairs_prompt(controllers_info, templates_info)
@@ -464,16 +462,16 @@ class MigrationEngine:
                 if ctrl_path and tmpl_path:
                     result[ctrl_path] = tmpl_path
                 else:
-                    print(f"   ⚠️  Could not resolve pair: {ctrl_filename} → {tmpl_filename}")
+                    print(f"     Could not resolve pair: {ctrl_filename} → {tmpl_filename}")
             
             return result
             
         except json.JSONDecodeError as e:
-            print(f"   ⚠️  LLM response parsing failed: {e}")
+            print(f"     LLM response parsing failed: {e}")
             print(f"   Response: {content[:200]}")
             return {}
         except Exception as e:
-            print(f"   ⚠️  LLM pairing failed: {e}")
+            print(f"     LLM pairing failed: {e}")
             return {}
     
     def _analyze_dependencies_with_llm(self, files: List[Path]) -> Dict[Path, List[Path]]:
@@ -482,7 +480,7 @@ class MigrationEngine:
         if not files:
             return {}
         
-        print("   🤖 Using AI to analyze file dependencies...")
+        print("    Using AI to analyze file dependencies...")
         
         # Prepare file information for LLM
         files_info = []
@@ -498,7 +496,7 @@ class MigrationEngine:
                     'content': content_preview
                 })
             except Exception as e:
-                print(f"   ⚠️  Could not read {file.name}: {e}")
+                print(f"     Could not read {file.name}: {e}")
         
         # Build LLM prompt
         prompt = dependencies_prompt(files_info)
@@ -541,12 +539,12 @@ class MigrationEngine:
             return result
             
         except json.JSONDecodeError as e:
-            print(f"   ⚠️  LLM response parsing failed: {e}")
+            print(f"     LLM response parsing failed: {e}")
             print(f"   Response: {content[:200]}")
             # Fallback to regex-based analysis
             return self._analyze_dependencies_regex_fallback(files)
         except Exception as e:
-            print(f"   ⚠️  LLM dependency analysis failed: {e}")
+            print(f"     LLM dependency analysis failed: {e}")
             # Fallback to regex-based analysis
             return self._analyze_dependencies_regex_fallback(files)
 
@@ -592,13 +590,13 @@ class MigrationEngine:
             return updated_code
             
         except Exception as e:
-            print(f"   ⚠️  LLM import update failed: {e}, using original code")
+            print(f"     LLM import update failed: {e}, using original code")
             return code
 
     def _analyze_dependencies_regex_fallback(self, files: List[Path]) -> Dict[Path, List[Path]]:
         """Fallback regex-based dependency analysis if LLM fails"""
         
-        print("   ⚙️  Falling back to regex-based analysis...")
+        print("     Falling back to regex-based analysis...")
         dependency_map = {}
         
         for file_path in files:
@@ -709,12 +707,12 @@ Return ONLY valid JSON with validation results."""
             return result
             
         except json.JSONDecodeError as e:
-            print(f"   ⚠️  Validation JSON parsing failed: {e}")
+            print(f"     Validation JSON parsing failed: {e}")
             print(f"   Response: {content[:200]}")
             # Fallback to basic validation
             return self._validate_template(html_code, {})
         except Exception as e:
-            print(f"   ⚠️  Component-aware validation failed: {e}")
+            print(f"     Component-aware validation failed: {e}")
             # Fallback to basic validation
             return self._validate_template(html_code, {})
 
@@ -764,11 +762,11 @@ Return ONLY valid JSON with validation results."""
         if not input_path.exists():
             raise FileNotFoundError(f"Input file not found: {input_file}")
         
-        print(f"📄 Processing: {input_path.name}")
+        print(f" Processing: {input_path.name}")
         print("-" * 70)
         
         # Step 1: Load legacy code
-        print("1️⃣ Loading AngularJS code...")
+        print("1️ Loading AngularJS code...")
         legacy_code = input_path.read_text(encoding='utf-8')
         print(f"   Size: {len(legacy_code)} characters")
         
@@ -781,7 +779,7 @@ Return ONLY valid JSON with validation results."""
         file_extension = input_path.suffix.lower()
         
         # Step 2: Classify file
-        print("2️⃣ Classifying file type...")
+        print("2️ Classifying file type...")
         classification = self.classifier.classify(cleaned_code, file_extension=file_extension)
         print(f"   Type: {classification['primary_type']}")
         print(f"   Confidence: {classification['confidence']}")
@@ -792,12 +790,12 @@ Return ONLY valid JSON with validation results."""
         print()
         
         # Step 3: Build prompt from patterns
-        print("3️⃣ Loading migration patterns...")
+        print("3️ Loading migration patterns...")
         
         # Use cleaned code for prompt (limit size for LLM)
         code_for_prompt = cleaned_code
         if len(code_for_prompt) > 10000:
-            print(f"   ⚠️  Code too large ({len(code_for_prompt)} chars), truncating to 10000 chars")
+            print(f"     Code too large ({len(code_for_prompt)} chars), truncating to 10000 chars")
             code_for_prompt = code_for_prompt[:10000] + "\n\n... [truncated]"
         
         # NEW: Build context-aware prompt for templates
@@ -820,7 +818,7 @@ Return ONLY valid JSON with validation results."""
         print()
         
         # Step 4: Run LLM migration
-        print(f"4️⃣ Running AI migration ({self.model})...")
+        print(f"4️ Running AI migration ({self.model})...")
         
         # Different system messages for templates vs TypeScript
         if classification['primary_type'] == 'template':
@@ -862,7 +860,7 @@ Return ONLY the TypeScript code, no explanations."""
 
                 # Handle payload-too-large (422) by retrying once immediately with a simplified prompt
                 if "422" in err:
-                    print(f"   ⚠️  Request too large, retrying with simplified prompt...")
+                    print(f"     Request too large, retrying with simplified prompt...")
                     simplified_prompt = self._build_simplified_prompt(
                         classification['primary_type'],
                         code_for_prompt[:5000]
@@ -876,21 +874,21 @@ Return ONLY the TypeScript code, no explanations."""
                         migrated_code = response.content
                         break
                     except Exception as e2:
-                        print(f"   ⚠️  Simplified prompt failed: {e2}")
+                        print(f"     Simplified prompt failed: {e2}")
                         err = str(e2)
 
                 # Treat read timeouts / transient network errors with exponential backoff
                 is_timeout = "timed out" in err.lower() or "read timed out" in err.lower() or isinstance(e, requests.exceptions.ReadTimeout)
                 if is_timeout and attempt < max_retries:
                     wait = backoff_base ** attempt
-                    print(f"   ⚠️  Read timed out, retrying in {wait}s (attempt {attempt}/{max_retries})...")
+                    print(f"     Read timed out, retrying in {wait}s (attempt {attempt}/{max_retries})...")
                     time.sleep(wait)
                     continue
 
                 # Generic retry for other transient failures
                 if attempt < max_retries:
                     wait = backoff_base ** attempt
-                    print(f"   ⚠️  LLM call failed: {err} — retrying in {wait}s (attempt {attempt}/{max_retries})...")
+                    print(f"     LLM call failed: {err} — retrying in {wait}s (attempt {attempt}/{max_retries})...")
                     time.sleep(wait)
                     continue
 
@@ -922,12 +920,12 @@ Return ONLY the TypeScript code, no explanations."""
         # Step 5: Validate (only for TypeScript files)
         validation_result = None
         if validate and classification['primary_type'] != 'template':
-            print("5️⃣ Validating TypeScript code...")
+            print("5️ Validating TypeScript code...")
             validation_result = self.validator.validate(
                 migrated_code,
                 output_file or input_path.with_suffix('.service.ts').name
             )
-            print(f"   Valid: {'✅ Yes' if validation_result['valid'] else '❌ No'}")
+            print(f"   Valid: {' Yes' if validation_result['valid'] else ' No'}")
             print(f"   Score: {validation_result['score']}/100")
             
             if validation_result['typescript_errors']:
@@ -938,7 +936,7 @@ Return ONLY the TypeScript code, no explanations."""
                 print(f"   Suggestions: {len(validation_result['suggestions'])}")
             print()
         elif classification['primary_type'] == 'template':
-            print("5️⃣ Validating HTML template...")
+            print("5️ Validating HTML template...")
             
             # NEW: Context-aware validation if component available
             if paired_component_code:
@@ -950,7 +948,7 @@ Return ONLY the TypeScript code, no explanations."""
             else:
                 validation_result = self._validate_template(migrated_code, classification['features'])
             
-            print(f"   Valid: {'✅ Yes' if validation_result.get('valid', True) else '⚠️  With warnings'}")
+            print(f"   Valid: {' Yes' if validation_result.get('valid', True) else '  With warnings'}")
             print(f"   Score: {validation_result.get('score', 0)}/100")
             if validation_result.get('warnings'):
                 print(f"   Warnings: {len(validation_result['warnings'])}")
@@ -1010,7 +1008,7 @@ Return ONLY the TypeScript code, no explanations."""
             dependency_context.get('migration_map') and
             classification['primary_type'] != 'template'):  # Only for code files
             
-            print("🔄 Updating import paths with AI...")
+            print(" Updating import paths with AI...")
             migrated_code = self._update_import_paths_with_llm(
                 migrated_code,
                 input_path.name,
@@ -1020,7 +1018,7 @@ Return ONLY the TypeScript code, no explanations."""
             )
             print()
         
-        print(f"6️⃣ Saving output...")
+        print(f"6️ Saving output...")
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(migrated_code, encoding='utf-8')
         print(f"   Saved: {output_path}")
@@ -1028,7 +1026,7 @@ Return ONLY the TypeScript code, no explanations."""
         
         # Summary
         print("=" * 70)
-        print("📊 MIGRATION SUMMARY")
+        print(" MIGRATION SUMMARY")
         print("=" * 70)
         print(f"Input:       {input_path}")
         print(f"Output:      {output_path}")
@@ -1038,14 +1036,14 @@ Return ONLY the TypeScript code, no explanations."""
         print(f"Model:       {self.model}")
         
         if validation_result:
-            print(f"Valid:       {'✅ Yes' if validation_result.get('valid', True) else '❌ No'}")
+            print(f"Valid:       {' Yes' if validation_result.get('valid', True) else ' No'}")
             print(f"Score:       {validation_result.get('score', 0)}/100")
         
         if paired_template_path:
             print(f"Paired With: {paired_template_path.name}")
         
         if paired_component_code:
-            print(f"Component Context: ✅ Used for semantic validation")
+            print(f"Component Context:  Used for semantic validation")
         
         print("=" * 70)
         
@@ -1135,12 +1133,12 @@ Return ONLY the TypeScript code, no explanations."""
     def _format_template_validation(self, validation: Dict) -> str:
         """Format template validation report"""
         lines = []
-        lines.append("📋 TEMPLATE VALIDATION REPORT")
+        lines.append(" TEMPLATE VALIDATION REPORT")
         lines.append("=" * 70)
         
         # NEW: Show invalid bindings if present
         if validation.get('invalid_bindings'):
-            lines.append("\n❌ INVALID BINDINGS:")
+            lines.append("\n INVALID BINDINGS:")
             for binding in validation['invalid_bindings']:
                 if isinstance(binding, dict):
                     lines.append(f"  • {binding.get('binding', 'Unknown')} ({binding.get('type', 'unknown')} - {binding.get('line_hint', 'no location')})")
@@ -1148,13 +1146,13 @@ Return ONLY the TypeScript code, no explanations."""
                     lines.append(f"  • {binding}")
         
         if validation.get('warnings'):
-            lines.append("\n⚠️  WARNINGS:")
+            lines.append("\n  WARNINGS:")
             for i, warning in enumerate(validation['warnings'], 1):
                 lines.append(f"  {i}. {warning}")
         
         # NEW: Show valid bindings if from component validation
         if validation.get('valid_bindings'):
-            lines.append(f"\n✅ VALID BINDINGS: {len(validation['valid_bindings'])}")
+            lines.append(f"\n VALID BINDINGS: {len(validation['valid_bindings'])}")
             if len(validation['valid_bindings']) <= 10:
                 for binding in validation['valid_bindings']:
                     lines.append(f"  • {binding}")
@@ -1165,14 +1163,14 @@ Return ONLY the TypeScript code, no explanations."""
         
         # Original feature detection (if available)
         if 'has_interpolation' in validation:
-            lines.append("\n✨ FEATURES DETECTED:")
-            lines.append(f"  • Interpolation: {'✅' if validation['has_interpolation'] else '❌'}")
-            lines.append(f"  • Event Bindings: {'✅' if validation.get('has_event_bindings') else '❌'}")
-            lines.append(f"  • Property Bindings: {'✅' if validation.get('has_property_bindings') else '❌'}")
+            lines.append("\n FEATURES DETECTED:")
+            lines.append(f"  • Interpolation: {'' if validation['has_interpolation'] else ''}")
+            lines.append(f"  • Event Bindings: {'' if validation.get('has_event_bindings') else ''}")
+            lines.append(f"  • Property Bindings: {'' if validation.get('has_property_bindings') else ''}")
         
         # NEW: Show suggestions if available
         if validation.get('suggestions'):
-            lines.append("\n💡 SUGGESTIONS:")
+            lines.append("\n SUGGESTIONS:")
             for suggestion in validation['suggestions']:
                 lines.append(f"  • {suggestion}")
         
@@ -1187,7 +1185,7 @@ Return ONLY the TypeScript code, no explanations."""
                             results: List[Dict]) -> Dict:
         """Use LLM to analyze migration results and provide intelligent recommendations"""
         
-        print("   🤖 Analyzing migration with AI for intelligent insights...")
+        print("    Analyzing migration with AI for intelligent insights...")
         
         # Prepare summary of migration for LLM
         migration_summary = {
@@ -1274,7 +1272,7 @@ Return ONLY valid JSON."""
             return insights
             
         except json.JSONDecodeError as e:
-            print(f"   ⚠️  LLM insights parsing failed: {e}")
+            print(f"     LLM insights parsing failed: {e}")
             return {
                 "overall_assessment": "Unable to generate AI insights",
                 "root_causes": [],
@@ -1285,7 +1283,7 @@ Return ONLY valid JSON."""
                 "risks": []
             }
         except Exception as e:
-            print(f"   ⚠️  LLM insights generation failed: {e}")
+            print(f"     LLM insights generation failed: {e}")
             return {
                 "overall_assessment": "Unable to generate AI insights",
                 "root_causes": [],
@@ -1301,27 +1299,27 @@ Return ONLY valid JSON."""
         lines = []
         
         lines.append("┌" + "─" * 78 + "┐")
-        lines.append("│ 🤖 AI-POWERED MIGRATION ANALYSIS" + " " * 44 + "│")
+        lines.append("│  AI-POWERED MIGRATION ANALYSIS" + " " * 44 + "│")
         lines.append("└" + "─" * 78 + "┘")
         lines.append("")
         
         # Overall Assessment
-        lines.append("📊 OVERALL ASSESSMENT:")
+        lines.append(" OVERALL ASSESSMENT:")
         lines.append(f"   {insights.get('overall_assessment', 'No assessment available')}")
         lines.append("")
         
         # Root Causes
         if insights.get('root_causes'):
-            lines.append("🔍 ROOT CAUSE ANALYSIS:")
+            lines.append(" ROOT CAUSE ANALYSIS:")
             for i, cause in enumerate(insights['root_causes'], 1):
                 lines.append(f"   {i}. {cause}")
             lines.append("")
         
         # Migration Priority
         if insights.get('migration_priority'):
-            lines.append("⚡ MIGRATION PRIORITY (Re-migrate these first):")
+            lines.append(" MIGRATION PRIORITY (Re-migrate these first):")
             for item in insights['migration_priority']:
-                priority_icon = "🔴" if item.get('priority') == 'HIGH' else "🟡" if item.get('priority') == 'MEDIUM' else "🟢"
+                priority_icon = "" if item.get('priority') == 'HIGH' else "" if item.get('priority') == 'MEDIUM' else "🟢"
                 lines.append(f"   {priority_icon} {item.get('file', 'Unknown')}")
                 lines.append(f"      └─ {item.get('reason', 'No reason provided')}")
             lines.append("")
@@ -1329,7 +1327,7 @@ Return ONLY valid JSON."""
         # Dependency Recommendations
         dep_recs = insights.get('dependency_recommendations', {})
         if any(dep_recs.values()):
-            lines.append("📦 DEPENDENCY RECOMMENDATIONS:")
+            lines.append(" DEPENDENCY RECOMMENDATIONS:")
             
             if dep_recs.get('install_first'):
                 lines.append("   Install First:")
@@ -1356,7 +1354,7 @@ Return ONLY valid JSON."""
         
         # Next Steps
         if insights.get('next_steps'):
-            lines.append("📋 RECOMMENDED NEXT STEPS:")
+            lines.append(" RECOMMENDED NEXT STEPS:")
             for step in insights['next_steps']:
                 lines.append(f"   {step.get('step', '?')}. {step.get('action', 'No action specified')}")
                 lines.append(f"      └─ {step.get('reason', 'No reason provided')}")
@@ -1364,9 +1362,9 @@ Return ONLY valid JSON."""
         
         # Risks
         if insights.get('risks'):
-            lines.append("⚠️  RISK ASSESSMENT:")
+            lines.append("  RISK ASSESSMENT:")
             for risk in insights['risks']:
-                severity_icon = "🔴" if risk.get('severity') == 'HIGH' else "🟡" if risk.get('severity') == 'MEDIUM' else "🟢"
+                severity_icon = "" if risk.get('severity') == 'HIGH' else "" if risk.get('severity') == 'MEDIUM' else "🟢"
                 lines.append(f"   {severity_icon} {risk.get('risk', 'Unknown risk')}")
                 lines.append(f"      └─ Mitigation: {risk.get('mitigation', 'No mitigation provided')}")
             lines.append("")
@@ -1442,11 +1440,11 @@ def main():
         )
         
         print()
-        print("✨ Migration completed successfully!")
+        print(" Migration completed successfully!")
     except FileNotFoundError as e:
-        print(f"❌ Error: {e}")
+        print(f" Error: {e}")
     except Exception as e:
-        print(f"❌ Migration failed: {e}")
+        print(f" Migration failed: {e}")
         import traceback
         traceback.print_exc()
 

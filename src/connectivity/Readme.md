@@ -146,9 +146,9 @@ Archietecture [Migration Agent]:
    → Uses: HttpClient, @Injectable, Observables
    ↓
 5️⃣ VALIDATOR:
-   → TypeScript check: ⚠️ tsc not installed (bypassed)
-   → Angular patterns: ✅ All good
-   → Code quality: 💡 3 suggestions
+   → TypeScript check:  tsc not installed (bypassed)
+   → Angular patterns:  All good
+   → Code quality:  3 suggestions
    → Score: 81/100 (GOOD)
    ↓
 6️⃣ OUTPUT: api.service.ts

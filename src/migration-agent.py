@@ -53,7 +53,7 @@ def save_migrated_code(content: str, filename: str):
     output_path = output_dir / output_name
     
     output_path.write_text(content, encoding='utf-8')
-    print(f"✅ Migrated code saved to: {output_path}")
+    print(f" Migrated code saved to: {output_path}")
 
 
 def run_migration(filename: str, model: str = "claude-sonnet-4"):
@@ -64,22 +64,22 @@ def run_migration(filename: str, model: str = "claude-sonnet-4"):
         filename: Legacy AngularJS file to migrate
         model: AI model to use (claude-3.5-sonnet, claude-sonnet-4.5, o1-preview)
     """
-    print(f"🚀 Starting migration for: {filename}")
-    print(f"🤖 Using model: {model}")
+    print(f" Starting migration for: {filename}")
+    print(f" Using model: {model}")
     
     # Step 1: Get Copilot token
-    print("🔑 Acquiring Copilot token...")
+    print(" Acquiring Copilot token...")
     token = get_copilot_token_via_internal_endpoint()
     if not token:
-        print("❌ Failed to get token. Set GITHUB_TOKEN environment variable.")
+        print(" Failed to get token. Set GITHUB_TOKEN environment variable.")
         return
     
     # Step 2: Initialize ChatCopilot
-    print(f"🔧 Initializing {model}...")
+    print(f" Initializing {model}...")
     llm = ChatCopilot(token=token, model=model)
     
     # Step 3: Load files
-    print("📂 Loading migration rules and legacy code...")
+    print(" Loading migration rules and legacy code...")
     rules = load_migration_rules()
     legacy_code = load_legacy_code(filename)
     
@@ -102,7 +102,7 @@ Requirements:
     ]
     
     # Step 5: Get AI response
-    print("🧠 Processing migration with AI...")
+    print(" Processing migration with AI...")
     response = llm.invoke(messages)
     
     # Step 6: Clean and save code
@@ -118,7 +118,7 @@ Requirements:
     save_migrated_code(migrated_code, filename)
     
     print("\n" + "="*60)
-    print("📊 Migration Summary:")
+    print(" Migration Summary:")
     print(f"   Input:  legacy-code/{filename}")
     print(f"   Output: output/{filename.replace('.js', '.service.ts')}")
     print(f"   Model:  {model}")

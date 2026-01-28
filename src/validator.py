@@ -87,7 +87,7 @@ class CodeValidator:
         except FileNotFoundError:
             return {
                 'valid': False,
-                'errors': ['⚠️ TypeScript not found. Run: npm install -g typescript']
+                'errors': [' TypeScript not found. Run: npm install -g typescript']
             }
         except subprocess.TimeoutExpired:
             return {
@@ -143,41 +143,41 @@ class CodeValidator:
     
     def format_validation_report(self, validation_result: Dict) -> str:
         """Format validation result as readable report"""
-        lines = ["=" * 70, "📋 VALIDATION REPORT", "=" * 70, ""]
+        lines = ["=" * 70, " VALIDATION REPORT", "=" * 70, ""]
         
         score = validation_result.get('score', 0)
         if score >= 90:
-            status = "✅ EXCELLENT"
+            status = " EXCELLENT"
         elif score >= 70:
             status = "✔️ GOOD"
         elif score >= 50:
-            status = "⚠️ NEEDS IMPROVEMENT"
+            status = " NEEDS IMPROVEMENT"
         else:
-            status = "❌ POOR"
+            status = " POOR"
         
         lines.append(f"Overall Score: {score}/100 {status}")
         lines.append("")
         
         ts_errors = validation_result.get('typescript_errors', [])
         if ts_errors:
-            lines.append("❌ TypeScript Errors:")
+            lines.append(" TypeScript Errors:")
             for error in ts_errors:
                 lines.append(f"   {error}")
             lines.append("")
         else:
-            lines.append("✅ TypeScript Compilation: Passed")
+            lines.append(" TypeScript Compilation: Passed")
             lines.append("")
         
         warnings = validation_result.get('angular_warnings', [])
         if warnings:
-            lines.append("⚠️ Angular Pattern Warnings:")
+            lines.append(" Angular Pattern Warnings:")
             for warning in warnings:
                 lines.append(f"   • {warning}")
             lines.append("")
         
         suggestions = validation_result.get('suggestions', [])
         if suggestions:
-            lines.append("💡 Code Quality Suggestions:")
+            lines.append(" Code Quality Suggestions:")
             for suggestion in suggestions:
                 lines.append(f"   • {suggestion}")
             lines.append("")
