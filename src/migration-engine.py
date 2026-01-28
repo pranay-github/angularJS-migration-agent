@@ -1,14 +1,22 @@
 """
 AngularJS to Angular 16+ Migration Engine
 Pattern-Based Architecture (No MCP)
+WITH Context-Aware HTML Template Migration
 """
 
 import sys
 import re
+import json
+import time
+import requests
+import datetime
+import traceback
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-import json
-from config import DEFAULT_MODEL, DEFAULT_FILE_EXTENSIONS;
+from config import DEFAULT_MODEL, DEFAULT_FILE_EXTENSIONS
+from suggestions import generate_suggestions_report
+from prompt_templates import pairs_prompt, insights_prompt, pairs_prompt_system, dependencies_prompt, dependencies_prompt_system, import_update_prompt, import_update_prompt_system, template_with_component_prompt, validate_template_prompt, attribute_suggestion_prompt
+
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -42,15 +50,57 @@ class MigrationEngine:
         
         # Track component-template relationships
         self.component_template_map = {}
+        # Track migration context for dependency awareness
+        self.migration_map = {}  # old_path -> new_path
+        self.dependency_graph = {}  # file -> list of dependencies
         
         print("✅ Engine Ready")
         print("=" * 70)
         print()
+
+    def _topological_sort(self, files: List[Path], 
+                        dependency_map: Dict[Path, List[Path]]) -> List[Path]:
+        """Sort files by dependency order using topological sort (dependencies first)"""
+        from collections import deque, defaultdict
+        
+        # Build in-degree map (how many dependencies does each file have)
+        in_degree = {f: 0 for f in files}
+        graph = defaultdict(list)
+        
+        for file, deps in dependency_map.items():
+            for dep in deps:
+                if dep in in_degree:  # Only consider deps that are in our migration set
+                    graph[dep].append(file)
+                    in_degree[file] += 1
+        
+        # Start with files that have no dependencies
+        queue = deque([f for f in files if in_degree[f] == 0])
+        sorted_files = []
+        
+        while queue:
+            current = queue.popleft()
+            sorted_files.append(current)
+            
+            # Process files that depend on current
+            for dependent in graph[current]:
+                in_degree[dependent] -= 1
+                if in_degree[dependent] == 0:
+                    queue.append(dependent)
+        
+        # Handle circular dependencies or remaining files
+        remaining = [f for f in files if f not in sorted_files]
+        if remaining:
+            print(f"   ⚠️  {len(remaining)} file(s) have circular dependencies, adding at end")
+            sorted_files.extend(remaining)
+        
+        return sorted_files
     
     def migrate_directory(self, input_dir: str, output_dir: str = None, 
-                         file_extensions: List[str] = ['.js', '.html'], 
-                         validate: bool = True,
-                         pair_templates: bool = True) -> Dict:
+                        file_extensions: List[str] = ['.js', '.html'], 
+                        validate: bool = True,
+                        pair_templates: bool = True,
+                        analyze_dependencies: bool = True,
+                        fix_imports: bool = True) -> Dict:
         """
         Migrate all AngularJS files in a directory to Angular 16+
         
@@ -60,6 +110,8 @@ class MigrationEngine:
             file_extensions: List of file extensions to process (default: ['.js', '.html'])
             validate: Whether to validate migrated code
             pair_templates: Whether to pair controllers with templates using LLM
+            analyze_dependencies: Whether to analyze and respect file dependencies
+            fix_imports: Whether to automatically fix import paths after migration
             
         Returns:
             Dictionary with migration results for all files
@@ -88,6 +140,8 @@ class MigrationEngine:
         print(f"📁 Output Directory: {output_path}")
         print(f"📄 File Extensions:  {', '.join(file_extensions)}")
         print(f"🔗 Template Pairing: {'Enabled (LLM-based)' if pair_templates else 'Disabled'}")
+        print(f"🔍 Dependency Analysis: {'Enabled (LLM-based)' if analyze_dependencies else 'Disabled'}")
+        print(f"🔄 Import Fixing: {'Enabled' if fix_imports else 'Disabled'}")
         print()
         
         # Scan for files
@@ -121,7 +175,40 @@ class MigrationEngine:
         print(f"   Other:       {len(categorized['other'])}")
         print()
         
-        # Step 5: Detect component-template pairs using LLM
+        # Analyze dependencies for code files using LLM
+        print("🔍 Analyzing dependencies...")
+        all_code_files = (categorized['services'] + categorized['controllers'] + 
+                        categorized['directives'] + categorized['filters'] + 
+                        categorized['other'])
+
+        dependency_map = {}
+        sorted_code_files = all_code_files
+
+        if all_code_files and analyze_dependencies:
+            # Use LLM for intelligent dependency analysis
+            dependency_map = self._analyze_dependencies_with_llm(all_code_files)
+            
+            # Show dependency information
+            deps_found = sum(1 for deps in dependency_map.values() if deps)
+            if deps_found > 0:
+                print(f"   ✅ Found {deps_found} file(s) with dependencies")
+                for file, deps in dependency_map.items():
+                    if deps:
+                        print(f"      {file.name} depends on:")
+                        for dep in deps:
+                            print(f"         └─ {dep.name}")
+                
+                # Sort by dependency order
+                sorted_code_files = self._topological_sort(all_code_files, dependency_map)
+                print(f"   🔄 Established migration order ({len(sorted_code_files)} files)")
+            else:
+                print(f"   ℹ️  No dependencies detected between files")
+            print()
+
+        # Store for later use
+        self.dependency_graph = dependency_map
+        
+        # Detect component-template pairs using LLM
         pairs_map = {}
         if pair_templates and categorized['controllers'] and categorized['templates']:
             print("🔗 Using LLM to detect component-template pairs...")
@@ -132,20 +219,21 @@ class MigrationEngine:
             if pairs_map:
                 print(f"   Found {len(pairs_map)} controller-template pair(s)")
                 for ctrl_file, tmpl_file in pairs_map.items():
-                    print(f"   • {ctrl_file.name} ↔ {tmpl_file.name}")
+                    print(f"      {ctrl_file.name} → {tmpl_file.name}")
             else:
                 print("   No pairs detected")
             print()
         
-        # Process files in order: services → controllers → directives → filters → templates → other
-        processing_order = [
-            ('services', categorized['services']),
-            ('controllers', categorized['controllers']),
-            ('directives', categorized['directives']),
-            ('filters', categorized['filters']),
-            ('templates', categorized['templates']),
-            ('other', categorized['other'])
-        ]
+        # Build processing order respecting dependencies
+        processing_order = []
+        
+        # Add sorted code files first (respecting dependencies)
+        if sorted_code_files:
+            processing_order.append(('code (dependency-ordered)', sorted_code_files, None))
+        
+        # Add templates last with pairs_map for context-aware migration
+        if categorized['templates']:
+            processing_order.append(('templates', categorized['templates'], pairs_map))
         
         results = []
         successful = 0
@@ -156,7 +244,14 @@ class MigrationEngine:
         print("=" * 70)
         print()
         
-        for category, files in processing_order:
+        for category_data in processing_order:
+            # Unpack with support for optional pairs_map
+            if len(category_data) == 3:
+                category, files, category_pairs_map = category_data
+            else:
+                category, files = category_data[:2]
+                category_pairs_map = None
+            
             if not files:
                 continue
             
@@ -168,37 +263,64 @@ class MigrationEngine:
                 print("-" * 70)
                 
                 try:
-                    # Find paired template if this is a controller
-                    paired_template = None
-                    if category == 'controllers' and pair_templates:
-                        paired_template = pairs_map.get(file_path)
-                        if paired_template:
-                            print(f"🔗 Paired with template: {paired_template.name}")
+                    # Determine output file path
+                    rel_path = file_path.relative_to(input_path)
+                    output_file = output_path / rel_path
                     
-                    # Migrate the file
+                    # Check if this file is paired with a template
+                    paired_template = category_pairs_map.get(file_path) if category_pairs_map else None
+                    
+                    # If this IS a template, check if it's paired with a component
+                    paired_component_code = None
+                    if file_path.suffix.lower() in ['.html', '.htm'] and category_pairs_map:
+                        # Find controller that pairs with this template
+                        for ctrl_file, tmpl_file in category_pairs_map.items():
+                            if tmpl_file == file_path:
+                                # Load the controller code for context
+                                try:
+                                    paired_component_code = ctrl_file.read_text(encoding='utf-8')
+                                except Exception:
+                                    paired_component_code = None
+                                break
+                    
+                    # Migrate with dependency context
+                    dependency_context = {
+                        'fix_imports': fix_imports,
+                        'migration_map': self.migration_map
+                    } if fix_imports else None
+                    
                     result = self.migrate_file(
                         input_file=str(file_path),
-                        output_file=None,
+                        output_file=str(output_file),
                         validate=validate,
-                        paired_template_path=paired_template
+                        paired_template_path=paired_template,
+                        paired_component_code=paired_component_code,
+                        dependency_context=dependency_context
                     )
+                    
+                    # Track migration for import fixing
+                    self.migration_map[str(file_path)] = result.get('output_file', str(output_file))
+                    
+                    # Track component-template pairs
+                    if paired_template:
+                        self.component_template_map[result.get('output_file', str(output_file))] = str(output_path / paired_template.relative_to(input_path))
                     
                     results.append({
                         'file': str(file_path),
                         'status': 'success',
-                        'result': result,
-                        'paired_template': str(paired_template) if paired_template else None
+                        'result': result
                     })
                     successful += 1
+                    print("✅ Success")
                     
                 except Exception as e:
-                    print(f"❌ Failed to migrate {file_path.name}: {e}")
                     results.append({
                         'file': str(file_path),
                         'status': 'failed',
                         'error': str(e)
                     })
                     failed += 1
+                    print(f"❌ Failed: {e}")
             
             print()
         
@@ -218,7 +340,37 @@ class MigrationEngine:
             for comp, tmpl in self.component_template_map.items():
                 print(f"   • {Path(comp).name} → {Path(tmpl).name}")
         
-        print("=" * 70)
+        if analyze_dependencies and self.dependency_graph:
+            deps_count = sum(1 for deps in self.dependency_graph.values() if deps)
+            if deps_count > 0:
+                print(f"\n📦 Dependencies Tracked: {deps_count} file(s)")
+        
+        # Generate LLM-powered insights
+        print()
+        print("🤖 Generating AI-powered migration analysis...")
+        llm_insights = self._generate_llm_insights(
+            categorized=categorized,
+            dependency_map=dependency_map,
+            pairs_map=pairs_map,
+            results=results
+        )
+        
+        # Generate suggestions report (including LLM insights)
+        print()
+        print("📝 Generating comprehensive suggestions report...")
+        suggestions_content = generate_suggestions_report(
+            self,
+            categorized,
+            dependency_map,
+            pairs_map,
+            results,
+            output_path,
+            llm_insights
+        )
+        
+        suggestions_file = output_path / "suggestions.txt"
+        suggestions_file.write_text(suggestions_content, encoding='utf-8')
+        print(f"   ✅ Saved: {suggestions_file}")
         
         return {
             'total_files': len(files_to_migrate),
@@ -226,9 +378,12 @@ class MigrationEngine:
             'failed': failed,
             'results': results,
             'output_directory': str(output_path),
-            'component_template_pairs': self.component_template_map
+            'suggestions_file': str(suggestions_file),
+            'llm_insights': llm_insights,
+            'component_template_pairs': self.component_template_map,
+            'dependency_graph': {str(k): [str(v) for v in vals] for k, vals in self.dependency_graph.items()}
         }
-    
+
     def _detect_pairs_with_llm(self, controllers: List[Path], 
                                templates: List[Path]) -> Dict[Path, Path]:
         """
@@ -277,34 +432,9 @@ class MigrationEngine:
                 print(f"   ⚠️  Could not read {tmpl.name}: {e}")
         
         # Build LLM prompt
-        prompt = f"""Analyze these AngularJS controllers and templates to determine which pairs belong together.
+        prompt = pairs_prompt(controllers_info, templates_info)
 
-CONTROLLERS:
-{json.dumps(controllers_info, indent=2)}
-
-TEMPLATES:
-{json.dumps(templates_info, indent=2)}
-
-TASK:
-Match each controller with its corresponding template based on:
-1. templateUrl declarations in controller code
-2. Controller names and template filenames
-3. Code structure and content relationships
-4. AngularJS naming conventions
-
-Return ONLY a JSON object mapping controller filenames to template filenames:
-{{
-  "controller1.js": "template1.html",
-  "user.controller.js": "user-view.html"
-}}
-
-If a controller has no matching template, omit it from the result.
-Return ONLY the JSON object, no explanations."""
-
-        system_msg = """You are an expert AngularJS code analyzer.
-Analyze controller and template files to determine which belong together.
-Look for templateUrl, naming patterns, and code structure.
-Return ONLY valid JSON mapping controller filenames to template filenames."""
+        system_msg = pairs_prompt_system()
 
         try:
             messages = [
@@ -334,7 +464,7 @@ Return ONLY valid JSON mapping controller filenames to template filenames."""
                 if ctrl_path and tmpl_path:
                     result[ctrl_path] = tmpl_path
                 else:
-                    print(f"   ⚠️  Could not find paths for: {ctrl_filename} → {tmpl_filename}")
+                    print(f"   ⚠️  Could not resolve pair: {ctrl_filename} → {tmpl_filename}")
             
             return result
             
@@ -346,6 +476,248 @@ Return ONLY valid JSON mapping controller filenames to template filenames."""
             print(f"   ⚠️  LLM pairing failed: {e}")
             return {}
     
+    def _analyze_dependencies_with_llm(self, files: List[Path]) -> Dict[Path, List[Path]]:
+        """Use LLM to analyze dependencies between files (more accurate than regex)"""
+        
+        if not files:
+            return {}
+        
+        print("   🤖 Using AI to analyze file dependencies...")
+        
+        # Prepare file information for LLM
+        files_info = []
+        for file in files:
+            try:
+                content = file.read_text(encoding='utf-8')
+                # Include more context for LLM (up to 2000 chars)
+                content_preview = content[:2000] + ("..." if len(content) > 2000 else "")
+                files_info.append({
+                    'filename': file.name,
+                    'path': str(file.relative_to(file.parent.parent)),
+                    'extension': file.suffix,
+                    'content': content_preview
+                })
+            except Exception as e:
+                print(f"   ⚠️  Could not read {file.name}: {e}")
+        
+        # Build LLM prompt
+        prompt = dependencies_prompt(files_info)
+
+        system_msg = dependencies_prompt_system()
+
+        try:
+            messages = [
+                SystemMessage(content=system_msg),
+                HumanMessage(content=prompt)
+            ]
+            
+            response = self.llm.invoke(messages)
+            content = response.content.strip()
+            
+            # Clean JSON from response
+            if '```json' in content:
+                content = content.split('```json')[1].split('```')[0].strip()
+            elif '```' in content:
+                content = content.split('```')[1].split('```')[0].strip()
+            
+            # Parse LLM response
+            deps_dict = json.loads(content)
+            
+            # Convert filenames back to Path objects
+            result = {}
+            filename_to_path = {f.name: f for f in files}
+            
+            for filename, dep_filenames in deps_dict.items():
+                file_path = filename_to_path.get(filename)
+                if file_path:
+                    dep_paths = [filename_to_path[df] for df in dep_filenames if df in filename_to_path]
+                    result[file_path] = dep_paths
+            
+            # Ensure all files are in result (even if no deps found by LLM)
+            for file in files:
+                if file not in result:
+                    result[file] = []
+            
+            return result
+            
+        except json.JSONDecodeError as e:
+            print(f"   ⚠️  LLM response parsing failed: {e}")
+            print(f"   Response: {content[:200]}")
+            # Fallback to regex-based analysis
+            return self._analyze_dependencies_regex_fallback(files)
+        except Exception as e:
+            print(f"   ⚠️  LLM dependency analysis failed: {e}")
+            # Fallback to regex-based analysis
+            return self._analyze_dependencies_regex_fallback(files)
+
+    def _update_import_paths_with_llm(self, code: str, current_file_name: str,
+                                    input_path: Path, output_path: Path,
+                                    migration_map: Dict[str, str]) -> str:
+        """Use LLM to intelligently update import paths"""
+        
+        if not migration_map:
+            return code
+        
+        # Build context about migrated files
+        migration_info = []
+        for old_path, new_path in migration_map.items():
+            migration_info.append({
+                'old': str(Path(old_path).name),
+                'new': str(Path(new_path).name),
+                'old_full': old_path,
+                'new_full': new_path
+            })
+        
+        prompt = import_update_prompt(current_file_name, str(output_path), code[:3000], migration_info)
+
+        system_msg = import_update_prompt_system()
+
+        try:
+            messages = [
+                SystemMessage(content=system_msg),
+                HumanMessage(content=prompt)
+            ]
+            
+            response = self.llm.invoke(messages)
+            updated_code = response.content.strip()
+            
+            # Clean code blocks
+            if '```typescript' in updated_code:
+                updated_code = updated_code.split('```typescript')[1].split('```')[0].strip()
+            elif '```ts' in updated_code:
+                updated_code = updated_code.split('```ts')[1].split('```')[0].strip()
+            elif '```' in updated_code:
+                updated_code = updated_code.split('```')[1].split('```')[0].strip()
+            
+            return updated_code
+            
+        except Exception as e:
+            print(f"   ⚠️  LLM import update failed: {e}, using original code")
+            return code
+
+    def _analyze_dependencies_regex_fallback(self, files: List[Path]) -> Dict[Path, List[Path]]:
+        """Fallback regex-based dependency analysis if LLM fails"""
+        
+        print("   ⚙️  Falling back to regex-based analysis...")
+        dependency_map = {}
+        
+        for file_path in files:
+            try:
+                content = file_path.read_text(encoding='utf-8')
+                dependencies = []
+                
+                # Find ES6 imports
+                es6_imports = re.findall(r'import\s+.*?\s+from\s+[\'"](\..+?)[\'"]', content)
+                
+                # Find CommonJS require
+                commonjs_imports = re.findall(r'require\s*\([\'"](\..+?)[\'"]\)', content)
+                
+                all_imports = es6_imports + commonjs_imports
+                
+                # Resolve each import
+                for imp in all_imports:
+                    resolved = self._resolve_import_path(file_path, imp, files)
+                    if resolved:
+                        dependencies.append(resolved)
+                
+                dependency_map[file_path] = list(set(dependencies))
+                
+            except Exception as e:
+                dependency_map[file_path] = []
+        
+        return dependency_map
+
+    def _resolve_import_path(self, from_file: Path, import_path: str, 
+                            all_files: List[Path]) -> Optional[Path]:
+        """Resolve relative import path to actual file"""
+        from_dir = from_file.parent
+        
+        # Clean path
+        import_path = import_path.strip('\'"')
+        
+        # Try different extensions
+        for ext in ['.ts', '.js', '.tsx', '.jsx', '/index.ts', '/index.js', '']:
+            try:
+                if ext.startswith('/'):
+                    resolved_path = (from_dir / import_path).resolve()
+                else:
+                    resolved_path = (from_dir / (import_path + ext)).resolve()
+                
+                # Check if exists in file list
+                for file in all_files:
+                    if file.resolve() == resolved_path:
+                        return file
+            except:
+                continue
+        
+        return None
+
+    def _build_template_prompt_with_component_context(self, 
+                                                       template_code: str,
+                                                       component_code: str,
+                                                       features: Dict) -> str:
+        """Build template migration prompt with component context for semantic validation"""
+        
+        # Truncate component code if too large
+        component_preview = component_code[:2500] + ("..." if len(component_code) > 2500 else "")
+        
+        return template_with_component_prompt(component_preview, template_code, features)
+
+    def _validate_template_against_component(self,
+                                             html_code: str,
+                                             component_code: str) -> Dict:
+        """Use LLM to validate template bindings against component structure"""
+        
+        # Truncate for LLM
+        html_preview = html_code[:2000] + ("..." if len(html_code) > 2000 else "")
+        component_preview = component_code[:2500] + ("..." if len(component_code) > 2500 else "")
+        
+        prompt = validate_template_prompt(component_preview, html_preview)
+
+        system_msg = """You are an expert Angular template validator.
+Analyze component-template relationships and identify binding errors.
+Check if template references match component class members.
+Return ONLY valid JSON with validation results."""
+
+        try:
+            messages = [
+                SystemMessage(content=system_msg),
+                HumanMessage(content=prompt)
+            ]
+            
+            response = self.llm.invoke(messages)
+            content = response.content.strip()
+            
+            # Clean JSON from response
+            if '```json' in content:
+                content = content.split('```json')[1].split('```')[0].strip()
+            elif '```' in content:
+                content = content.split('```')[1].split('```')[0].strip()
+            
+            result = json.loads(content)
+            
+            # Ensure required keys exist
+            if 'valid' not in result:
+                result['valid'] = result.get('score', 0) >= 70
+            if 'valid_bindings' not in result:
+                result['valid_bindings'] = []
+            if 'invalid_bindings' not in result:
+                result['invalid_bindings'] = []
+            if 'warnings' not in result:
+                result['warnings'] = []
+            
+            return result
+            
+        except json.JSONDecodeError as e:
+            print(f"   ⚠️  Validation JSON parsing failed: {e}")
+            print(f"   Response: {content[:200]}")
+            # Fallback to basic validation
+            return self._validate_template(html_code, {})
+        except Exception as e:
+            print(f"   ⚠️  Component-aware validation failed: {e}")
+            # Fallback to basic validation
+            return self._validate_template(html_code, {})
+
     def _categorize_files(self, files: List[Path]) -> Dict[str, List[Path]]:
         """Categorize files by type based on filename and extension"""
         categories = {
@@ -383,7 +755,9 @@ Return ONLY valid JSON mapping controller filenames to template filenames."""
         return categories
 
     def migrate_file(self, input_file: str, output_file: str = None, validate: bool = True,
-                    paired_template_path: Optional[Path] = None) -> Dict:
+                paired_template_path: Optional[Path] = None,
+                paired_component_code: Optional[str] = None,
+                dependency_context: Optional[Dict] = None) -> Dict:
         """Migrate a single AngularJS file to Angular 16+"""
         input_path = Path(input_file)
         
@@ -426,11 +800,21 @@ Return ONLY valid JSON mapping controller filenames to template filenames."""
             print(f"   ⚠️  Code too large ({len(code_for_prompt)} chars), truncating to 10000 chars")
             code_for_prompt = code_for_prompt[:10000] + "\n\n... [truncated]"
         
-        prompt = self.registry.build_prompt(
-            classification['primary_type'],
-            code_for_prompt,
-            classification['features']
-        )
+        # NEW: Build context-aware prompt for templates
+        if classification['primary_type'] == 'template' and paired_component_code:
+            print(f"   Using component-aware migration")
+            prompt = self._build_template_prompt_with_component_context(
+                code_for_prompt,
+                paired_component_code,
+                classification['features']
+            )
+        else:
+            prompt = self.registry.build_prompt(
+                classification['primary_type'],
+                code_for_prompt,
+                classification['features']
+            )
+        
         print(f"   Pattern: {classification['primary_type']}")
         print(f"   Rules: {len(self.registry.get_migration_rules(classification['primary_type']))} rules loaded")
         print()
@@ -440,44 +824,82 @@ Return ONLY valid JSON mapping controller filenames to template filenames."""
         
         # Different system messages for templates vs TypeScript
         if classification['primary_type'] == 'template':
-            system_msg = """You are an expert Angular template migration specialist.
-    Follow the provided patterns and rules exactly.
-    Convert AngularJS template syntax to Angular 16+ template syntax.
-    Return ONLY the migrated HTML template code, no explanations.
-    Preserve the HTML structure and styling.
-    Convert all ng-* directives to Angular equivalents."""
+            if paired_component_code:
+                system_msg = """You are an expert Angular template migration specialist with semantic validation.
+Analyze the paired component class to ensure all template bindings are valid.
+Convert AngularJS template syntax to Angular 16+ while validating against component structure.
+Remove or fix bindings that reference non-existent properties or methods.
+Return ONLY the migrated HTML template code, no explanations."""
+            else:
+                system_msg = """You are an expert Angular template migration specialist.
+Follow the provided patterns and rules exactly.
+Convert AngularJS template syntax to Angular 16+ template syntax.
+Return ONLY the migrated HTML template code, no explanations.
+Preserve the HTML structure and styling.
+Convert all ng-* directives to Angular equivalents."""
         else:
             system_msg = """You are an expert Angular migration specialist.
-    Follow the provided patterns and rules exactly.
-    Generate clean, production-ready TypeScript code.
-    Use Angular 16+ features: standalone components, HttpClient, RxJS Observables.
-    Return ONLY the TypeScript code, no explanations."""
-        
+Follow the provided patterns and rules exactly.
+Generate clean, production-ready TypeScript code.
+Use Angular 16+ features: standalone components, HttpClient, RxJS Observables.
+Return ONLY the TypeScript code, no explanations."""
         messages = [
             SystemMessage(content=system_msg),
             HumanMessage(content=prompt)
         ]
-        
-        try:
-            response = self.llm.invoke(messages)
-            migrated_code = response.content
-        except Exception as e:
-            if "422" in str(e):
-                print(f"   ⚠️  Request too large, retrying with simplified prompt...")
-                # Fallback: use simplified prompt
-                simplified_prompt = self._build_simplified_prompt(
-                    classification['primary_type'],
-                    code_for_prompt[:5000]  # Further reduce
-                )
-                messages = [
-                    SystemMessage(content=system_msg),
-                    HumanMessage(content=simplified_prompt)
-                ]
+
+        migrated_code = None
+        max_retries = 3
+        backoff_base = 2
+
+        for attempt in range(1, max_retries + 1):
+            try:
                 response = self.llm.invoke(messages)
                 migrated_code = response.content
-            else:
+                break
+            except Exception as e:
+                err = str(e)
+
+                # Handle payload-too-large (422) by retrying once immediately with a simplified prompt
+                if "422" in err:
+                    print(f"   ⚠️  Request too large, retrying with simplified prompt...")
+                    simplified_prompt = self._build_simplified_prompt(
+                        classification['primary_type'],
+                        code_for_prompt[:5000]
+                    )
+                    messages = [
+                        SystemMessage(content=system_msg),
+                        HumanMessage(content=simplified_prompt)
+                    ]
+                    try:
+                        response = self.llm.invoke(messages)
+                        migrated_code = response.content
+                        break
+                    except Exception as e2:
+                        print(f"   ⚠️  Simplified prompt failed: {e2}")
+                        err = str(e2)
+
+                # Treat read timeouts / transient network errors with exponential backoff
+                is_timeout = "timed out" in err.lower() or "read timed out" in err.lower() or isinstance(e, requests.exceptions.ReadTimeout)
+                if is_timeout and attempt < max_retries:
+                    wait = backoff_base ** attempt
+                    print(f"   ⚠️  Read timed out, retrying in {wait}s (attempt {attempt}/{max_retries})...")
+                    time.sleep(wait)
+                    continue
+
+                # Generic retry for other transient failures
+                if attempt < max_retries:
+                    wait = backoff_base ** attempt
+                    print(f"   ⚠️  LLM call failed: {err} — retrying in {wait}s (attempt {attempt}/{max_retries})...")
+                    time.sleep(wait)
+                    continue
+
+                # Final attempt failed — surface the error
                 raise
-        
+
+        if migrated_code is None:
+            raise RuntimeError(f"LLM did not return a response after {max_retries} attempts")
+                
         # Clean code blocks
         if classification['primary_type'] == 'template':
             # For HTML templates, clean HTML code blocks
@@ -517,11 +939,23 @@ Return ONLY valid JSON mapping controller filenames to template filenames."""
             print()
         elif classification['primary_type'] == 'template':
             print("5️⃣ Validating HTML template...")
-            validation_result = self._validate_template(migrated_code, classification['features'])
-            print(f"   Valid: {'✅ Yes' if validation_result['valid'] else '⚠️  With warnings'}")
-            print(f"   Score: {validation_result['score']}/100")
-            if validation_result['warnings']:
+            
+            # NEW: Context-aware validation if component available
+            if paired_component_code:
+                print("   Using component context for validation...")
+                validation_result = self._validate_template_against_component(
+                    migrated_code,
+                    paired_component_code
+                )
+            else:
+                validation_result = self._validate_template(migrated_code, classification['features'])
+            
+            print(f"   Valid: {'✅ Yes' if validation_result.get('valid', True) else '⚠️  With warnings'}")
+            print(f"   Score: {validation_result.get('score', 0)}/100")
+            if validation_result.get('warnings'):
                 print(f"   Warnings: {len(validation_result['warnings'])}")
+            if validation_result.get('invalid_bindings'):
+                print(f"   Invalid bindings: {len(validation_result['invalid_bindings'])}")
             print()
         
         # Step 6: Save output
@@ -543,14 +977,10 @@ Return ONLY valid JSON mapping controller filenames to template filenames."""
                 
                 # If controller has paired template, update component decorator
                 if paired_template_path:
-                    template_output_name = f"{input_path.stem}.component.html"
                     migrated_code = self._update_component_template_url(
-                        migrated_code, 
-                        template_output_name
+                        migrated_code,
+                        paired_template_path.with_suffix('.component.html').name
                     )
-                    # Track the relationship
-                    self.component_template_map[str(output_dir / output_name)] = str(output_dir / template_output_name)
-                    print(f"🔗 Updated templateUrl to: ./{template_output_name}")
                     
             elif classification['primary_type'] == 'directive':
                 output_name += '.directive.ts'
@@ -560,6 +990,35 @@ Return ONLY valid JSON mapping controller filenames to template filenames."""
                 output_name += '.ts'
             
             output_path = output_dir / output_name
+        if classification['primary_type'] != 'template' and output_path:
+            base = output_path.stem
+            parent = output_path.parent
+
+            if classification['primary_type'] == 'service':
+                output_path = parent / f"{base}.service.ts"
+            elif classification['primary_type'] == 'controller':
+                output_path = parent / f"{base}.component.ts"
+            elif classification['primary_type'] == 'directive':
+                output_path = parent / f"{base}.directive.ts"
+            elif classification['primary_type'] == 'filter':
+                output_path = parent / f"{base}.pipe.ts"
+            else:
+                output_path = parent / f"{base}.ts"
+        # Update import paths using LLM if we have dependency context
+        if (dependency_context and 
+            dependency_context.get('fix_imports') and 
+            dependency_context.get('migration_map') and
+            classification['primary_type'] != 'template'):  # Only for code files
+            
+            print("🔄 Updating import paths with AI...")
+            migrated_code = self._update_import_paths_with_llm(
+                migrated_code,
+                input_path.name,
+                input_path,
+                output_path,
+                dependency_context['migration_map']
+            )
+            print()
         
         print(f"6️⃣ Saving output...")
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -579,11 +1038,14 @@ Return ONLY valid JSON mapping controller filenames to template filenames."""
         print(f"Model:       {self.model}")
         
         if validation_result:
-            print(f"Valid:       {'✅ Yes' if validation_result['valid'] else '❌ No'}")
-            print(f"Score:       {validation_result['score']}/100")
+            print(f"Valid:       {'✅ Yes' if validation_result.get('valid', True) else '❌ No'}")
+            print(f"Score:       {validation_result.get('score', 0)}/100")
         
         if paired_template_path:
             print(f"Paired With: {paired_template_path.name}")
+        
+        if paired_component_code:
+            print(f"Component Context: ✅ Used for semantic validation")
         
         print("=" * 70)
         
@@ -622,7 +1084,6 @@ Return ONLY valid JSON mapping controller filenames to template filenames."""
     
     def _validate_template(self, html_code: str, features: Dict) -> Dict:
         """Validate migrated HTML template"""
-        import re
         
         warnings = []
         score = 100
@@ -677,23 +1138,243 @@ Return ONLY valid JSON mapping controller filenames to template filenames."""
         lines.append("📋 TEMPLATE VALIDATION REPORT")
         lines.append("=" * 70)
         
-        if validation['warnings']:
+        # NEW: Show invalid bindings if present
+        if validation.get('invalid_bindings'):
+            lines.append("\n❌ INVALID BINDINGS:")
+            for binding in validation['invalid_bindings']:
+                if isinstance(binding, dict):
+                    lines.append(f"  • {binding.get('binding', 'Unknown')} ({binding.get('type', 'unknown')} - {binding.get('line_hint', 'no location')})")
+                else:
+                    lines.append(f"  • {binding}")
+        
+        if validation.get('warnings'):
             lines.append("\n⚠️  WARNINGS:")
             for i, warning in enumerate(validation['warnings'], 1):
                 lines.append(f"  {i}. {warning}")
         
-        lines.append("\n✨ FEATURES DETECTED:")
-        lines.append(f"  • Interpolation: {'✅' if validation['has_interpolation'] else '❌'}")
-        lines.append(f"  • Event Bindings: {'✅' if validation['has_event_bindings'] else '❌'}")
-        lines.append(f"  • Property Bindings: {'✅' if validation['has_property_bindings'] else '❌'}")
+        # NEW: Show valid bindings if from component validation
+        if validation.get('valid_bindings'):
+            lines.append(f"\n✅ VALID BINDINGS: {len(validation['valid_bindings'])}")
+            if len(validation['valid_bindings']) <= 10:
+                for binding in validation['valid_bindings']:
+                    lines.append(f"  • {binding}")
+            else:
+                lines.append(f"  (showing first 10 of {len(validation['valid_bindings'])})")
+                for binding in validation['valid_bindings'][:10]:
+                    lines.append(f"  • {binding}")
+        
+        # Original feature detection (if available)
+        if 'has_interpolation' in validation:
+            lines.append("\n✨ FEATURES DETECTED:")
+            lines.append(f"  • Interpolation: {'✅' if validation['has_interpolation'] else '❌'}")
+            lines.append(f"  • Event Bindings: {'✅' if validation.get('has_event_bindings') else '❌'}")
+            lines.append(f"  • Property Bindings: {'✅' if validation.get('has_property_bindings') else '❌'}")
+        
+        # NEW: Show suggestions if available
+        if validation.get('suggestions'):
+            lines.append("\n💡 SUGGESTIONS:")
+            for suggestion in validation['suggestions']:
+                lines.append(f"  • {suggestion}")
         
         lines.append("\n" + "=" * 70)
         
         return "\n".join(lines)
+    
+    def _generate_llm_insights(self, 
+                            categorized: Dict[str, List[Path]],
+                            dependency_map: Dict[Path, List[Path]],
+                            pairs_map: Dict[Path, Path],
+                            results: List[Dict]) -> Dict:
+        """Use LLM to analyze migration results and provide intelligent recommendations"""
+        
+        print("   🤖 Analyzing migration with AI for intelligent insights...")
+        
+        # Prepare summary of migration for LLM
+        migration_summary = {
+            'total_files': len(results),
+            'successful': len([r for r in results if r['status'] == 'success']),
+            'failed': len([r for r in results if r['status'] == 'failed']),
+            'file_types': {
+                'services': len(categorized.get('services', [])),
+                'controllers': len(categorized.get('controllers', [])),
+                'directives': len(categorized.get('directives', [])),
+                'filters': len(categorized.get('filters', [])),
+                'templates': len(categorized.get('templates', []))
+            },
+            'dependencies_found': sum(1 for deps in dependency_map.values() if deps),
+            'component_template_pairs': len(pairs_map)
+        }
+        
+        # Collect validation issues
+        validation_issues = []
+        for result in results:
+            if result['status'] == 'success' and 'result' in result:
+                validation = result['result'].get('validation')
+                if validation and (not validation.get('valid', True) or validation.get('warnings')):
+                    validation_issues.append({
+                        'file': Path(result['file']).name,
+                        'score': validation.get('score', 0),
+                        'issues': validation.get('warnings', []) + [b.get('binding', str(b)) for b in validation.get('invalid_bindings', [])]
+                    })
+        
+        # Collect failed migrations
+        failed_migrations = []
+        for result in results:
+            if result['status'] == 'failed':
+                failed_migrations.append({
+                    'file': Path(result['file']).name,
+                    'error': str(result.get('error', 'Unknown error'))[:200]
+                })
+        
+        # Collect external dependencies
+        external_deps = set()
+        angular_modules = set()
+        for result in results:
+            if result['status'] == 'success' and 'result' in result:
+                code = result['result'].get('migrated_code', '')
+                imports = re.findall(r'import\s+.*?\s+from\s+[\'"]([^\'"]+)[\'"]', code)
+                for imp in imports:
+                    if not imp.startswith('.'):
+                        if imp.startswith('@angular/'):
+                            angular_modules.add(imp)
+                        else:
+                            external_deps.add(imp)
+        
+        # Build LLM prompt
+        prompt = insights_prompt(migration_summary, validation_issues, failed_migrations, angular_modules, external_deps)
+
+        system_msg = """You are an expert Angular migration consultant with deep knowledge of:
+- AngularJS 1.x architecture and patterns
+- Angular 16+ modern features
+- Common migration pitfalls
+- TypeScript best practices
+- Dependency management
+
+Provide actionable, specific recommendations based on the actual migration results.
+Focus on root causes, not symptoms.
+Prioritize recommendations by impact.
+Return ONLY valid JSON."""
+
+        try:
+            messages = [
+                SystemMessage(content=system_msg),
+                HumanMessage(content=prompt)
+            ]
+            
+            response = self.llm.invoke(messages)
+            content = response.content.strip()
+            
+            # Clean JSON from response
+            if '```json' in content:
+                content = content.split('```json')[1].split('```')[0].strip()
+            elif '```' in content:
+                content = content.split('```')[1].split('```')[0].strip()
+            
+            insights = json.loads(content)
+            return insights
+            
+        except json.JSONDecodeError as e:
+            print(f"   ⚠️  LLM insights parsing failed: {e}")
+            return {
+                "overall_assessment": "Unable to generate AI insights",
+                "root_causes": [],
+                "migration_priority": [],
+                "dependency_recommendations": {},
+                "code_quality_issues": [],
+                "next_steps": [],
+                "risks": []
+            }
+        except Exception as e:
+            print(f"   ⚠️  LLM insights generation failed: {e}")
+            return {
+                "overall_assessment": "Unable to generate AI insights",
+                "root_causes": [],
+                "migration_priority": [],
+                "dependency_recommendations": {},
+                "code_quality_issues": [],
+                "next_steps": [],
+                "risks": []
+            }
+
+    def _format_llm_insights_section(self, insights: Dict) -> List[str]:
+        """Format LLM insights into report section"""
+        lines = []
+        
+        lines.append("┌" + "─" * 78 + "┐")
+        lines.append("│ 🤖 AI-POWERED MIGRATION ANALYSIS" + " " * 44 + "│")
+        lines.append("└" + "─" * 78 + "┘")
+        lines.append("")
+        
+        # Overall Assessment
+        lines.append("📊 OVERALL ASSESSMENT:")
+        lines.append(f"   {insights.get('overall_assessment', 'No assessment available')}")
+        lines.append("")
+        
+        # Root Causes
+        if insights.get('root_causes'):
+            lines.append("🔍 ROOT CAUSE ANALYSIS:")
+            for i, cause in enumerate(insights['root_causes'], 1):
+                lines.append(f"   {i}. {cause}")
+            lines.append("")
+        
+        # Migration Priority
+        if insights.get('migration_priority'):
+            lines.append("⚡ MIGRATION PRIORITY (Re-migrate these first):")
+            for item in insights['migration_priority']:
+                priority_icon = "🔴" if item.get('priority') == 'HIGH' else "🟡" if item.get('priority') == 'MEDIUM' else "🟢"
+                lines.append(f"   {priority_icon} {item.get('file', 'Unknown')}")
+                lines.append(f"      └─ {item.get('reason', 'No reason provided')}")
+            lines.append("")
+        
+        # Dependency Recommendations
+        dep_recs = insights.get('dependency_recommendations', {})
+        if any(dep_recs.values()):
+            lines.append("📦 DEPENDENCY RECOMMENDATIONS:")
+            
+            if dep_recs.get('install_first'):
+                lines.append("   Install First:")
+                for dep in dep_recs['install_first']:
+                    lines.append(f"      • {dep}")
+            
+            if dep_recs.get('update_required'):
+                lines.append("   Update Required:")
+                for dep in dep_recs['update_required']:
+                    lines.append(f"      • {dep}")
+            
+            if dep_recs.get('incompatible'):
+                lines.append("   Incompatible:")
+                for dep in dep_recs['incompatible']:
+                    lines.append(f"      • {dep}")
+            lines.append("")
+        
+        # Code Quality Issues
+        if insights.get('code_quality_issues'):
+            lines.append("🎯 CODE QUALITY IMPROVEMENTS:")
+            for i, issue in enumerate(insights['code_quality_issues'], 1):
+                lines.append(f"   {i}. {issue}")
+            lines.append("")
+        
+        # Next Steps
+        if insights.get('next_steps'):
+            lines.append("📋 RECOMMENDED NEXT STEPS:")
+            for step in insights['next_steps']:
+                lines.append(f"   {step.get('step', '?')}. {step.get('action', 'No action specified')}")
+                lines.append(f"      └─ {step.get('reason', 'No reason provided')}")
+            lines.append("")
+        
+        # Risks
+        if insights.get('risks'):
+            lines.append("⚠️  RISK ASSESSMENT:")
+            for risk in insights['risks']:
+                severity_icon = "🔴" if risk.get('severity') == 'HIGH' else "🟡" if risk.get('severity') == 'MEDIUM' else "🟢"
+                lines.append(f"   {severity_icon} {risk.get('risk', 'Unknown risk')}")
+                lines.append(f"      └─ Mitigation: {risk.get('mitigation', 'No mitigation provided')}")
+            lines.append("")
+        
+        return lines
 
     def _clean_code_for_processing(self, code: str, file_extension: str) -> str:
         """Clean code by removing comments and excessive whitespace"""
-        import re
         
         if file_extension in ['.html', '.htm']:
             # Remove HTML comments (including copyright headers)
@@ -714,17 +1395,18 @@ Return ONLY valid JSON mapping controller filenames to template filenames."""
         """Build a simplified prompt for large files"""
         return f"""Migrate this AngularJS {pattern_type} to Angular 16+.
 
-    SOURCE CODE (truncated):
-    {code}
+SOURCE CODE (truncated):
+{code}
 
-    Convert to Angular 16+ with:
-    - Standalone components (if component)
-    - Modern Angular syntax
-    - HttpClient (if service)
-    - RxJS Observables
-    - Proper TypeScript types
+Convert to Angular 16+ with:
+- Standalone components (if component)
+- Modern Angular syntax
+- HttpClient (if service)
+- RxJS Observables
+- Proper TypeScript types
 
-    Return ONLY the migrated code."""
+Return ONLY the migrated code."""
+
 
 def main():
     """Main entry point"""
@@ -739,6 +1421,7 @@ def main():
     print("┌─────────────────────────────────────────────────────────────────┐")
     print("│     AngularJS → Angular 16+ Migration Engine                   │")
     print("│     Pattern-Based Architecture (No MCP)                        │")
+    print("│     WITH Context-Aware HTML Template Migration                 │")
     print("└─────────────────────────────────────────────────────────────────┘")
     print()
     
@@ -753,7 +1436,9 @@ def main():
             input_dir=str(INPUT_DIR),
             file_extensions=['.js', '.html', '.ts'],
             validate=True,
-            pair_templates=True  # Enable LLM-based component-template pairing
+            pair_templates=True,
+            analyze_dependencies=True,
+            fix_imports=True
         )
         
         print()

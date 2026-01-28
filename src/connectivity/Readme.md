@@ -30,7 +30,6 @@ $env:GITHUB_TOKEN = "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"
 
 Install:
 py -m pip install requests langchain langchain-core langchain-community
-py -m pip install mcp httpx
 
 
 What This Code Does? [chain.py]
