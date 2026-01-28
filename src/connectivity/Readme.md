@@ -21,12 +21,12 @@ Run Command:
 curl -X POST https://github.com/login/oauth/access_token -H "Accept: application/json" -d  "client_id=01ab8ac9400c4e429b23&device_code=d2a32d071e85e5e73c54e8012c546d9541289f1b&grant_type=urn:ietf:params:oauth:grant-type:device_code"
  
 Output :
-{"access_token":"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","token_type":"bearer","scope":"user:email"}
+{"access_token":"{{TOKEN}}","token_type":"bearer","scope":"user:email"}
 
 Step 4:
 
 In command prompt Set Environment variable [session]:
-$env:GITHUB_TOKEN = "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"
+$env:GITHUB_TOKEN = "{{TOKEN}}"
 
 Install:
 py -m pip install requests langchain langchain-core langchain-community
