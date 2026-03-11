@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Tuple
 from config import DEFAULT_MODEL, DEFAULT_FILE_EXTENSIONS
 from suggestions import generate_suggestions_report
 from prompt_templates import pairs_prompt, insights_prompt, pairs_prompt_system, dependencies_prompt, dependencies_prompt_system, import_update_prompt, import_update_prompt_system, template_with_component_prompt, validate_template_prompt, attribute_suggestion_prompt
+from cache_manager import MigrationCache
 
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -30,12 +31,14 @@ from validator import CodeValidator
 class MigrationEngine:
     """Main migration engine coordinating all components"""
     
-    def __init__(self, model: str = DEFAULT_MODEL):
+    def __init__(self, model: str = DEFAULT_MODEL, enable_cache: bool = True):
         print(" Initializing Migration Engine")
         print("=" * 70)
         
         self.registry = PatternRegistry()
         self.validator = CodeValidator()
+        
+        self.cache = MigrationCache() if enable_cache else None
         
         print(" Acquiring GitHub Copilot token...")
         token = get_copilot_token_via_internal_endpoint()
@@ -48,11 +51,15 @@ class MigrationEngine:
 
         self.model = model
         
-        # Track component-template relationships
         self.component_template_map = {}
-        # Track migration context for dependency awareness
-        self.migration_map = {}  # old_path -> new_path
-        self.dependency_graph = {}  # file -> list of dependencies
+        self.migration_map = {}
+        self.dependency_graph = {}
+        
+        if self.cache:
+            print(" Cache: Enabled")
+            self.cache.cleanup_expired()
+        else:
+            print(" Cache: Disabled")
         
         print(" Engine Ready")
         print("=" * 70)
@@ -322,7 +329,6 @@ class MigrationEngine:
             
             print()
         
-        # Final summary
         print()
         print("=" * 70)
         print(" BATCH MIGRATION SUMMARY")
@@ -332,6 +338,12 @@ class MigrationEngine:
         print(f"Failed:          {failed} ")
         print(f"Success Rate:    {(successful/len(files_to_migrate)*100):.1f}%")
         print(f"Output Location: {output_path}")
+        
+        if self.cache:
+            cache_stats = self.cache.get_stats()
+            print(f"\n Cache Performance:")
+            print(f"   Hit Rate:      {cache_stats['hit_rate']}% ({cache_stats['cache_hits']}/{cache_stats['total_requests']})")
+            print(f"   LLM Calls Saved: {cache_stats['cache_hits']}")
         
         if pair_templates and self.component_template_map:
             print(f"\n Component-Template Pairs: {len(self.component_template_map)}")
@@ -379,7 +391,8 @@ class MigrationEngine:
             'suggestions_file': str(suggestions_file),
             'llm_insights': llm_insights,
             'component_template_pairs': self.component_template_map,
-            'dependency_graph': {str(k): [str(v) for v in vals] for k, vals in self.dependency_graph.items()}
+            'dependency_graph': {str(k): [str(v) for v in vals] for k, vals in self.dependency_graph.items()},
+            'cache_stats': self.cache.get_stats() if self.cache else None
         }
 
     def _detect_pairs_with_llm(self, controllers: List[Path], 
@@ -820,85 +833,93 @@ Return ONLY valid JSON with validation results."""
         # Step 4: Run LLM migration
         print(f"4️ Running AI migration ({self.model})...")
         
-        # Different system messages for templates vs TypeScript
-        if classification['primary_type'] == 'template':
-            if paired_component_code:
-                system_msg = """You are an expert Angular template migration specialist with semantic validation.
+        cached_result = None
+        if self.cache:
+            cached_result = self.cache.get(code_for_prompt, classification['primary_type'], self.model)
+        
+        if cached_result:
+            migrated_code = cached_result.get('migrated_code')
+            print(f"   Using cached result")
+        else:
+            if classification['primary_type'] == 'template':
+                if paired_component_code:
+                    system_msg = """You are an expert Angular template migration specialist with semantic validation.
 Analyze the paired component class to ensure all template bindings are valid.
 Convert AngularJS template syntax to Angular 16+ while validating against component structure.
 Remove or fix bindings that reference non-existent properties or methods.
 Return ONLY the migrated HTML template code, no explanations."""
-            else:
-                system_msg = """You are an expert Angular template migration specialist.
+                else:
+                    system_msg = """You are an expert Angular template migration specialist.
 Follow the provided patterns and rules exactly.
 Convert AngularJS template syntax to Angular 16+ template syntax.
 Return ONLY the migrated HTML template code, no explanations.
 Preserve the HTML structure and styling.
 Convert all ng-* directives to Angular equivalents."""
-        else:
-            system_msg = """You are an expert Angular migration specialist.
+            else:
+                system_msg = """You are an expert Angular migration specialist.
 Follow the provided patterns and rules exactly.
 Generate clean, production-ready TypeScript code.
 Use Angular 16+ features: standalone components, HttpClient, RxJS Observables.
 Return ONLY the TypeScript code, no explanations."""
-        messages = [
-            SystemMessage(content=system_msg),
-            HumanMessage(content=prompt)
-        ]
+            messages = [
+                SystemMessage(content=system_msg),
+                HumanMessage(content=prompt)
+            ]
 
-        migrated_code = None
-        max_retries = 3
-        backoff_base = 2
+            migrated_code = None
+            max_retries = 3
+            backoff_base = 2
 
-        for attempt in range(1, max_retries + 1):
-            try:
-                response = self.llm.invoke(messages)
-                migrated_code = response.content
-                break
-            except Exception as e:
-                err = str(e)
+            for attempt in range(1, max_retries + 1):
+                try:
+                    response = self.llm.invoke(messages)
+                    migrated_code = response.content
+                    break
+                except Exception as e:
+                    err = str(e)
 
-                # Handle payload-too-large (422) by retrying once immediately with a simplified prompt
-                if "422" in err:
-                    print(f"     Request too large, retrying with simplified prompt...")
-                    simplified_prompt = self._build_simplified_prompt(
-                        classification['primary_type'],
-                        code_for_prompt[:5000]
-                    )
-                    messages = [
-                        SystemMessage(content=system_msg),
-                        HumanMessage(content=simplified_prompt)
-                    ]
-                    try:
-                        response = self.llm.invoke(messages)
-                        migrated_code = response.content
-                        break
-                    except Exception as e2:
-                        print(f"     Simplified prompt failed: {e2}")
-                        err = str(e2)
+                    # Handle payload-too-large (422) by retrying once immediately with a simplified prompt
+                    if "422" in err:
+                        print(f"     Request too large, retrying with simplified prompt...")
+                        simplified_prompt = self._build_simplified_prompt(
+                            classification['primary_type'],
+                            code_for_prompt[:5000]
+                        )
+                        messages = [
+                            SystemMessage(content=system_msg),
+                            HumanMessage(content=simplified_prompt)
+                        ]
+                        try:
+                            response = self.llm.invoke(messages)
+                            migrated_code = response.content
+                            break
+                        except Exception as e2:
+                            print(f"     Simplified prompt failed: {e2}")
+                            err = str(e2)
 
-                # Treat read timeouts / transient network errors with exponential backoff
-                is_timeout = "timed out" in err.lower() or "read timed out" in err.lower() or isinstance(e, requests.exceptions.ReadTimeout)
-                if is_timeout and attempt < max_retries:
-                    wait = backoff_base ** attempt
-                    print(f"     Read timed out, retrying in {wait}s (attempt {attempt}/{max_retries})...")
-                    time.sleep(wait)
-                    continue
+                    # Treat read timeouts / transient network errors with exponential backoff
+                    is_timeout = "timed out" in err.lower() or "read timed out" in err.lower() or isinstance(e, requests.exceptions.ReadTimeout)
+                    if is_timeout and attempt < max_retries:
+                        wait = backoff_base ** attempt
+                        print(f"     Read timed out, retrying in {wait}s (attempt {attempt}/{max_retries})...")
+                        time.sleep(wait)
+                        continue
 
-                # Generic retry for other transient failures
-                if attempt < max_retries:
-                    wait = backoff_base ** attempt
-                    print(f"     LLM call failed: {err} — retrying in {wait}s (attempt {attempt}/{max_retries})...")
-                    time.sleep(wait)
-                    continue
+                    # Generic retry for other transient failures
+                    if attempt < max_retries:
+                        wait = backoff_base ** attempt
+                        print(f"     LLM call failed: {err} — retrying in {wait}s (attempt {attempt}/{max_retries})...")
+                        time.sleep(wait)
+                        continue
 
-                # Final attempt failed — surface the error
-                raise
+                    raise
 
-        if migrated_code is None:
-            raise RuntimeError(f"LLM did not return a response after {max_retries} attempts")
+            if migrated_code is None:
+                raise RuntimeError(f"LLM did not return a response after {max_retries} attempts")
+            
+            if self.cache:
+                self.cache.set(code_for_prompt, classification['primary_type'], self.model, {'migrated_code': migrated_code})
                 
-        # Clean code blocks
         if classification['primary_type'] == 'template':
             # For HTML templates, clean HTML code blocks
             if "```html" in migrated_code:
@@ -1416,11 +1437,11 @@ def main():
     
     MODEL = DEFAULT_MODEL
     
-    print("┌─────────────────────────────────────────────────────────────────┐")
-    print("│     AngularJS → Angular 16+ Migration Engine                   │")
-    print("│     Pattern-Based Architecture (No MCP)                        │")
-    print("│     WITH Context-Aware HTML Template Migration                 │")
-    print("└─────────────────────────────────────────────────────────────────┘")
+    print("=" * 70)
+    print("     AngularJS -> Angular 16+ Migration Engine")
+    print("     Pattern-Based Architecture (No MCP)")
+    print("     WITH Context-Aware HTML Template Migration")
+    print("=" * 70)
     print()
     
     try:

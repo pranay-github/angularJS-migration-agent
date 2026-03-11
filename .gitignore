@@ -1,3 +1,5 @@
 node_modules
 src/output
 src/legacy-code
+.cache
+src/__pycache__
